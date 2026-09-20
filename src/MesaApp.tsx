@@ -196,6 +196,15 @@ export default function MesaApp() {
 
   const removeItem = (productId: string) => setCart(current => current.filter(item => item.productId !== productId));
 
+  const openTableOrder = (tableName: string) => {
+    setChannel('Mesa');
+    setTable(tableName);
+    setCart([]);
+    setCategory('Todos');
+    setSearch('');
+    setPage('pdv');
+  };
+
   const finishOrder = async () => {
     if (!cart.length) {
       setError('Adicione pelo menos um produto ao pedido.');
@@ -324,6 +333,7 @@ export default function MesaApp() {
               settingsForm={settingsForm}
               setSettingsForm={setSettingsForm}
               setPage={setPage}
+              openTableOrder={openTableOrder}
             />
           )}
         </div>
@@ -368,6 +378,7 @@ type ViewProps = {
   settingsForm: { restaurantName: string; unit: string };
   setSettingsForm: (value: { restaurantName: string; unit: string }) => void;
   setPage: (page: Page) => void;
+  openTableOrder: (tableName: string) => void;
 };
 
 function PageView(props: ViewProps) {
@@ -389,8 +400,8 @@ function OrderingWorkspace(props: ViewProps) {
       <section className="min-w-0">
         <div className="mb-4 flex items-end justify-between">
           <div>
-            <h1 className="text-lg font-bold">Explore categorias</h1>
-            <p className="text-xs text-slate-400">Escolha os itens do pedido e finalize no painel ao lado.</p>
+            <h1 className="text-lg font-bold">{props.channel === 'Mesa' && props.table ? props.table + ' · Cardápio' : 'Explore categorias'}</h1>
+            <p className="text-xs text-slate-400">{props.channel === 'Mesa' && props.table ? 'Adicione os produtos cadastrados ao pedido desta mesa.' : 'Escolha os itens do pedido e finalize no painel ao lado.'}</p>
           </div>
           <span className="hidden text-[10px] text-slate-400 md:block">Operação online · {props.data.settings.restaurantName}</span>
         </div>
@@ -449,7 +460,13 @@ function OrderingWorkspace(props: ViewProps) {
 function InvoicePanel(props: ViewProps) {
   return (
     <aside className="h-fit rounded-xl bg-white p-4 2xl:sticky 2xl:top-[96px]">
-      <h2 className="mb-4 text-sm font-bold">Pedido atual</h2>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold">{props.channel === 'Mesa' && props.table ? 'Pedido · ' + props.table : 'Pedido atual'}</h2>
+          {props.channel === 'Mesa' && props.table && <p className="mt-0.5 text-[9px] text-slate-400">Mesa selecionada para lançamento dos itens</p>}
+        </div>
+        {props.channel === 'Mesa' && props.table && <span className="rounded-full bg-[#fff2ee] px-2 py-1 text-[9px] font-bold text-[#e85b3a]">Mesa</span>}
+      </div>
       <div className="space-y-3">
         {props.cart.map(item => (
           <div key={item.productId} className="flex items-center gap-3">
@@ -518,20 +535,35 @@ function TablesView(props: ViewProps) {
     <PageSection title="Mesas" subtitle="Mapa operacional e situação em tempo real">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {props.data.tables.map(table => (
-          <div key={table.id} className="rounded-xl border border-white bg-white p-4">
+          <div
+            key={table.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => props.openTableOrder(table.name)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') props.openTableOrder(table.name);
+            }}
+            className="group cursor-pointer rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_8px_24px_rgba(46,42,38,0.035)] transition hover:-translate-y-0.5 hover:border-[#e6b6aa] hover:shadow-[0_12px_30px_rgba(46,42,38,0.065)] focus:outline-none focus:ring-2 focus:ring-[#f2b4a5]"
+          >
             <div className="flex items-center justify-between"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#ef5a38]"><Utensils size={17} /></span><Badge value={table.status} /></div>
             <h3 className="mt-4 text-sm font-bold">{table.name}</h3>
             <p className="mt-1 text-[10px] text-slate-400">{table.seats} lugares {table.waiter ? '· ' + table.waiter : ''}</p>
             <strong className="mt-3 block text-sm">{table.total ? BRL(table.total) : 'Disponível'}</strong>
-            <button
-              onClick={() => void props.run(
-                () => api.put('/api/tables/' + table.id + '/status', { status: table.status === 'Livre' ? 'Ocupada' : 'Livre' }),
-                table.status === 'Livre' ? 'Mesa aberta.' : 'Mesa liberada.'
-              )}
-              className={'mt-4 w-full rounded-lg py-2 text-[10px] font-bold ' + (table.status === 'Livre' ? 'bg-[#fff0eb] text-[#e85b3a]' : 'bg-[#f2f3f6] text-[#50566a]')}
-            >
-              {table.status === 'Livre' ? 'Abrir mesa' : 'Liberar mesa'}
-            </button>
+            <div className="mt-4 grid gap-2">
+              <span className="rounded-lg bg-[#f45f3f] py-2 text-center text-[10px] font-bold text-white transition group-hover:bg-[#df5132]">Abrir cardápio</span>
+              <button
+                onClick={event => {
+                  event.stopPropagation();
+                  void props.run(
+                    () => api.put('/api/tables/' + table.id + '/status', { status: table.status === 'Livre' ? 'Ocupada' : 'Livre' }),
+                    table.status === 'Livre' ? 'Mesa aberta.' : 'Mesa liberada.'
+                  );
+                }}
+                className={'w-full rounded-lg py-2 text-[10px] font-bold ' + (table.status === 'Livre' ? 'bg-[#fff0eb] text-[#e85b3a]' : 'bg-[#f2f3f6] text-[#50566a]')}
+              >
+                {table.status === 'Livre' ? 'Alterar para ocupada' : 'Liberar mesa'}
+              </button>
+            </div>
           </div>
         ))}
       </div>

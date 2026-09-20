@@ -1,43 +1,95 @@
 [
   {
-    "name": "Criar pedido pelo dashboard e enviar para cozinha",
+    "name": "Abrir mesa e lançar produtos do cardápio",
     "sanity": true,
     "viewport": "desktop",
-    "covers": ["Dashboard de pedidos", "PDV", "API POST /api/orders", "KDS", "pagamento"],
-    "description": "Valida o fluxo principal do layout de pedidos, incluindo carrinho, pagamento e cozinha.",
-    "steps": ["No Dashboard, adicionar Smash Bacon ao pedido", "Selecionar Pix", "Finalizar pedido", "Abrir Cozinha / KDS"],
-    "expected": "Um novo pedido aparece na coluna Novo do KDS."
+    "covers": [
+      "Mesas",
+      "abertura do cardápio pela mesa",
+      "seleção automática do canal Mesa",
+      "PDV",
+      "API POST /api/orders",
+      "KDS"
+    ],
+    "description": "Valida o novo fluxo principal em que clicar em uma mesa abre o cardápio cadastrado já vinculado àquela mesa e permite enviar o pedido para a cozinha.",
+    "steps": [
+      "Abrir Mesas",
+      "Clicar no card da Mesa 01 ou em Abrir cardápio",
+      "Confirmar que o PDV mostra Mesa 01 · Cardápio e o canal Mesa está selecionado",
+      "Adicionar Smash Bacon ao pedido e finalizar",
+      "Abrir Cozinha / KDS"
+    ],
+    "expected": "O cardápio cadastrado é aberto para a Mesa 01 e o pedido finalizado aparece como novo pedido no KDS vinculado ao canal Mesa."
   },
   {
     "name": "Cadastrar e excluir produto",
     "viewport": "desktop",
-    "covers": ["Produtos", "API POST /api/products", "API DELETE /api/products/:id"],
+    "covers": [
+      "Produtos",
+      "API POST /api/products",
+      "API DELETE /api/products/:id"
+    ],
     "description": "Valida criação e remoção persistente de produto.",
-    "steps": ["Abrir Produtos", "Cadastrar Produto QA com preço 9.90", "Confirmar Produto QA na lista", "Excluir Produto QA"],
+    "steps": [
+      "Abrir Produtos",
+      "Cadastrar Produto QA com preço 9.90",
+      "Confirmar Produto QA na lista",
+      "Excluir Produto QA"
+    ],
     "expected": "Produto QA é criado e depois deixa de aparecer."
   },
   {
-    "name": "Operar mesa e movimentar estoque",
+    "name": "Alterar situação da mesa e movimentar estoque",
     "viewport": "desktop",
-    "covers": ["Mesas", "API PUT /api/tables/:id/status", "Estoque", "API POST /api/stock/:id/adjust"],
-    "description": "Valida dois fluxos operacionais persistentes.",
-    "steps": ["Abrir Mesas e abrir uma mesa livre", "Liberar a mesma mesa", "Abrir Estoque", "Movimentar Pão brioche adicionando 5 unidades"],
-    "expected": "A mesa volta a Livre e o estoque de Pão brioche aumenta em 5 unidades."
+    "covers": [
+      "API PUT /api/tables/:id/status",
+      "Estoque",
+      "API POST /api/stock/:id/adjust"
+    ],
+    "description": "Valida que o novo clique para abrir o cardápio não interfere nos controles de ocupação/liberação da mesa nem no estoque.",
+    "steps": [
+      "Abrir Mesas",
+      "Na Mesa 01 clicar em Alterar para ocupada sem abrir o cardápio",
+      "Na mesma mesa clicar em Liberar mesa",
+      "Abrir Estoque",
+      "Movimentar Pão brioche adicionando 5 unidades"
+    ],
+    "expected": "A Mesa 01 volta ao status Livre e o estoque de Pão brioche aumenta em 5 unidades."
   },
   {
     "name": "Cadastrar cliente, lançamento financeiro e salvar configurações",
     "viewport": "mobile",
-    "covers": ["Clientes / CRM", "API POST /api/customers", "Financeiro", "API POST /api/transactions", "Configurações", "API PUT /api/settings", "responsividade"],
+    "covers": [
+      "Clientes / CRM",
+      "API POST /api/customers",
+      "Financeiro",
+      "API POST /api/transactions",
+      "Configurações",
+      "API PUT /api/settings",
+      "responsividade"
+    ],
     "description": "Valida os fluxos administrativos principais em viewport móvel.",
-    "steps": ["Cadastrar Cliente QA com telefone (47) 99999-1234", "Criar uma entrada financeira QA de R$ 10,00", "Alterar a unidade para Unidade QA e salvar"],
+    "steps": [
+      "Cadastrar Cliente QA com telefone (47) 99999-1234",
+      "Criar uma entrada financeira QA de R$ 10,00",
+      "Alterar a unidade para Unidade QA e salvar"
+    ],
     "expected": "Cliente, lançamento financeiro e nova unidade ficam visíveis após as operações."
   },
   {
     "name": "Bloquear finalização sem itens",
     "viewport": "desktop",
-    "covers": ["validação do PDV", "guardrail de pedido vazio"],
+    "covers": [
+      "validação do PDV",
+      "guardrail de pedido vazio"
+    ],
     "description": "Garante que pedido vazio não seja enviado.",
-    "steps": ["Abrir o Dashboard", "Remover todos os itens do pedido", "Observar o botão Finalizar pedido"],
-    "expected": "O botão Finalizar pedido fica desabilitado."
+    "steps": [
+      "Abrir Mesas",
+      "Clicar em Mesa 02 para abrir seu cardápio",
+      "Não adicionar produtos",
+      "Observar o botão Finalizar pedido"
+    ],
+    "expected": "O botão Finalizar pedido fica desabilitado enquanto a mesa não tiver itens no pedido."
   }
 ]
