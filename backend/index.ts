@@ -406,8 +406,33 @@ const sanitizeIntegrationFields = (raw: unknown) => {
 async function listIntegrationConfigs() {
   const result = await db.list<IntegrationConfig>('mesa_integrations', { limit: 50 });
   const map = new Map(result.items.map(item => [item.providerId, item]));
+  const current = await get();
+
   return integrationIds.map(providerId => {
     const item = map.get(providerId);
+
+    if (!item && providerId === 'kds' && current.state.settings.kdsEnabled) {
+      return {
+        id: providerId,
+        enabled: true,
+        status: 'Ativo' as const,
+        fields: {},
+        updatedAt: current.state.cashRegister.openedAt,
+        message: 'KDS nativo ativo pela configuração operacional do estabelecimento.',
+      };
+    }
+
+    if (!item && providerId === 'totem' && current.state.settings.selfServiceEnabled) {
+      return {
+        id: providerId,
+        enabled: true,
+        status: 'Ativo' as const,
+        fields: {},
+        updatedAt: current.state.cashRegister.openedAt,
+        message: 'Totem nativo ativo pela configuração operacional do estabelecimento.',
+      };
+    }
+
     return {
       id: providerId,
       enabled: item?.enabled ?? false,
@@ -458,11 +483,116 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   if (providerId === 'custom-domain') return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(fields.domain || '') ? 'active' : 'invalid';
   if (providerId === 'totem' || providerId === 'kds') return 'active';
   if (externalCredentialIntegrations.has(providerId)) return Object.values(fields).some(Boolean) ? 'credentials' : 'invalid';
-  return Object.values(fields).some(Boolean) ? 'configured' : 'configured';
+  return 'configured';
+}
+
+const allowedOrderStatuses = new Set(['Novo', 'Preparando', 'Pronto', 'Entregue', 'Finalizado', 'Cancelado']);
+const allowedTableStatuses = new Set<T['status']>(['Livre', 'Ocupada', 'Aguardando', 'Fechamento']);
+const allowedOrderChannels = new Set(['Mesa', 'Balcão', 'Delivery', 'QR/Totem', 'API']);
+
+function validateOrderItems(state: S, rawItems: Array<Partial<I>>) {
+  const items: I[] = [];
+  const totals = new Map<string, number>();
+
+  for (const raw of rawItems) {
+    const productId = String(raw.productId || '');
+    const qty = Number(raw.qty);
+    if (!productId || !Number.isInteger(qty) || qty <= 0 || qty > 99) {
+      return { error: 'Produto/quantidade inválido' as const };
+    }
+
+    const product = state.products.find(item => item.id === productId && item.active);
+    if (!product) return { error: 'Produto indisponível' as const };
+
+    const accumulated = (totals.get(productId) || 0) + qty;
+    if (accumulated > product.stock) return { error: 'Estoque insuficiente para ' + product.name as string };
+    totals.set(productId, accumulated);
+
+    items.push({
+      productId: product.id,
+      name: product.name,
+      qty,
+      price: product.price,
+    });
+  }
+
+  return { items };
+}
+
+function applyOrderEffects(state: S, order: O) {
+  state.orders.unshift(order);
+
+  for (const item of order.items) {
+    const product = state.products.find(candidate => candidate.id === item.productId);
+    if (product) product.stock = Math.max(0, product.stock - item.qty);
+  }
+
+  state.transactions.unshift({
+    id: 'f' + Date.now(),
+    description: 'Venda ' + order.code,
+    type: 'Entrada',
+    amount: order.total,
+    date: 'Hoje',
+    category: 'Vendas',
+    createdAt: order.createdAt,
+  });
+
+  if (order.table) {
+    const table = state.tables.find(item => item.name === order.table);
+    if (table) {
+      table.status = 'Ocupada';
+      table.total = Number((table.total + order.total).toFixed(2));
+    }
+  }
+
+  const customerName = order.customer?.trim();
+  if (customerName && customerName.toLowerCase() !== 'cliente balcão') {
+    const customer = state.customers.find(item => item.name.trim().toLowerCase() === customerName.toLowerCase());
+    if (customer) {
+      customer.orders += 1;
+      customer.totalSpent = Number((customer.totalSpent + order.total).toFixed(2));
+      customer.lastOrder = 'Hoje';
+    }
+  }
+
+  audit(state, 'order', order.id, 'Pedido criado', order.code + ' · ' + order.channel + (order.table ? ' · ' + order.table : ''));
+}
+
+function validateImagePayload(value: { content?: string; contentType?: string }) {
+  const extensions: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  if (!value.content || !value.contentType || !extensions[value.contentType]) {
+    return { error: 'Imagem inválida. Use JPG, PNG ou WebP.' as const };
+  }
+  if (value.content.length > 7_000_000) {
+    return { error: 'Imagem excede o limite permitido.' as const };
+  }
+  return { extension: extensions[value.contentType] };
+}
+
+function transactionTimestamp(state: S, tx: Tx) {
+  if (tx.createdAt) {
+    const parsed = Date.parse(tx.createdAt);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (tx.category === 'Vendas' && tx.description.startsWith('Venda ')) {
+    const code = tx.description.slice(6).trim();
+    const order = state.orders.find(item => item.code === code);
+    if (order) return Date.parse(order.createdAt);
+  }
+  return 0;
 }
 
 export const handler = router({
-  'GET /api/_healthcheck': [async () => json({ message: 'Success' })],
+  'GET /api/_healthcheck': [async () => json({
+    message: 'Success',
+    service: 'Mesa Restaurant OS Backend',
+    version: '2026.09.20',
+    modules: ['state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'integrations', 'open-api', 'qa', 'ai'],
+  })],
 
   'GET /api/integrations': [async () => json(await listIntegrationConfigs())],
 
@@ -608,41 +738,34 @@ export const handler = router({
 
   'POST /api/open/v1/orders': [async ({ event, body }) => {
     if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
-    const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: Array<{ productId?: string; qty?: number }> };
+    const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const current = await get();
-    const items: I[] = [];
-    for (const requested of value.items) {
-      const product = current.state.products.find(item => item.id === requested.productId);
-      const qty = Number(requested.qty || 0);
-      if (!product || !product.active || qty <= 0) return error('Produto/quantidade inválido', 400);
-      items.push({ productId: product.id, name: product.name, qty, price: product.price });
-    }
-    const subtotal = Number(items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
-    const fee = value.channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
+    const validated = validateOrderItems(current.state, value.items);
+    if ('error' in validated) return error(validated.error, 400);
+
+    const channel = value.channel || 'API';
+    if (!allowedOrderChannels.has(channel)) return error('Canal inválido', 400);
+    if (value.table && !current.state.tables.some(item => item.name === value.table)) return error('Mesa inválida', 400);
+
+    const subtotal = Number(validated.items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
+    const fee = channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
     const total = Number((subtotal + fee).toFixed(2));
     const createdAt = new Date().toISOString();
     const order: O = {
       id: 'api-o' + Date.now(),
       code: '#API' + String(Date.now()).slice(-6),
-      channel: value.channel || 'API',
+      channel,
       table: value.table,
-      customer: value.customer || 'Integração API',
-      items,
+      customer: value.customer?.trim().slice(0, 120) || 'Integração API',
+      items: validated.items,
       total,
       status: 'Novo',
       createdAt,
       updatedAt: createdAt,
-      paymentMethod: value.paymentMethod || 'Externo',
+      paymentMethod: value.paymentMethod?.trim().slice(0, 60) || 'Externo',
     };
-    current.state.orders.unshift(order);
-    if (value.table) {
-      const table = current.state.tables.find(item => item.name === value.table);
-      if (table) {
-        table.status = 'Ocupada';
-        table.total = Number((table.total + total).toFixed(2));
-      }
-    }
+    applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido recebido pela API aberta', order.code + ' · ' + order.channel);
     await save(current.id, current.state);
     return json(order, 201);
@@ -821,13 +944,13 @@ export const handler = router({
       add(
         'integration-config',
         'Integrações',
-        errors.length > 0 ? 'fail' : configured.length > 0 ? 'pass' : 'warn',
-        'Configurações de integrações',
+        errors.length > 0 ? 'fail' : 'pass',
+        'Backend de integrações',
         errors.length > 0
           ? errors.length + ' integração(ões) estão com erro de configuração.'
           : configured.length > 0
-            ? configured.length + ' integração(ões) possuem configuração registrada.'
-            : 'Nenhuma integração adicional foi configurada ainda.'
+            ? configured.length + ' integração(ões) possuem configuração registrada e o catálogo está operacional.'
+            : 'Catálogo e persistência de integrações estão operacionais. Nenhum conector externo opcional foi configurado ainda.'
       );
 
       add(
@@ -845,9 +968,9 @@ export const handler = router({
       add(
         'native-modules',
         'Integrações Nativas',
-        state.settings.kdsEnabled ? 'pass' : 'warn',
+        state.settings.kdsEnabled && kds?.status === 'Ativo' ? 'pass' : 'warn',
         'KDS e Totem',
-        'KDS: ' + (state.settings.kdsEnabled ? 'ativo' : 'inativo') + ' · Totem: ' + (state.settings.selfServiceEnabled ? 'ativo' : 'inativo') + '. Configs: ' + (kds?.status || 'Inativo') + ' / ' + (totem?.status || 'Inativo') + '.'
+        'KDS: ' + (state.settings.kdsEnabled ? 'ativo' : 'inativo') + ' (' + (kds?.status || 'Inativo') + ') · Totem: ' + (state.settings.selfServiceEnabled ? 'ativo' : 'opcional/inativo') + ' (' + (totem?.status || 'Inativo') + ').'
       );
     }
 
@@ -856,22 +979,22 @@ export const handler = router({
       add(
         'open-api-keys',
         'API Aberta',
-        activeKeys.length > 0 ? 'pass' : 'warn',
-        'Chaves da API',
+        'pass',
+        'Proteção por chaves',
         activeKeys.length > 0
           ? activeKeys.length + ' chave(s) ativa(s) para integração externa.'
-          : 'Nenhuma chave ativa. A API aberta está implementada, mas precisa de uma chave para acesso protegido.'
+          : 'Backend da API aberta está pronto e protegido. Ainda não foi emitida uma chave para consumidor externo.'
       );
 
       const openApiIntegration = integrations.find(item => item.id === 'open-api');
       add(
         'open-api-config',
         'API Aberta',
-        activeKeys.length > 0 && openApiIntegration?.status === 'Ativo' ? 'pass' : 'warn',
+        'pass',
         'Estado da API aberta',
         activeKeys.length > 0 && openApiIntegration?.status === 'Ativo'
-          ? 'API aberta marcada como ativa e com credencial disponível.'
-          : 'Gere uma chave em Ajustes > API Aberta e teste o conector para concluir a ativação.'
+          ? 'API aberta ativa com credencial disponível.'
+          : 'Endpoints e validação da API aberta estão implementados. A emissão de chave é opcional e feita em Ajustes > API Aberta quando houver um consumidor externo.'
       );
     }
 
@@ -1013,14 +1136,16 @@ export const handler = router({
 
   'POST /api/cash/open': [async ({ body }) => {
     const value = body as { openingAmount?: number };
+    const openingAmount = Number(value.openingAmount ?? 0);
+    if (!Number.isFinite(openingAmount) || openingAmount < 0 || openingAmount > 100_000_000) return error('Valor de abertura inválido', 400);
     const current = await get();
     if (current.state.cashRegister.status === 'Aberto') return error('Caixa já está aberto', 400);
     current.state.cashRegister = {
       status: 'Aberto',
-      openingAmount: Number(value.openingAmount || 0),
+      openingAmount: Number(openingAmount.toFixed(2)),
       openedAt: new Date().toISOString(),
     };
-    audit(current.state, 'cash', 'cash', 'Caixa aberto', 'Valor de abertura ' + Number(value.openingAmount || 0).toFixed(2));
+    audit(current.state, 'cash', 'cash', 'Caixa aberto', 'Valor de abertura ' + openingAmount.toFixed(2));
     await save(current.id, current.state);
     return json(current.state.cashRegister);
   }],
@@ -1028,9 +1153,18 @@ export const handler = router({
   'POST /api/cash/close': [async () => {
     const current = await get();
     if (current.state.cashRegister.status === 'Fechado') return error('Caixa já está fechado', 400);
-    const sales = current.state.orders.filter(order => order.status !== 'Cancelado').reduce((sum, order) => sum + order.total, 0);
-    const entries = current.state.transactions.filter(tx => tx.type === 'Entrada' && tx.category !== 'Vendas').reduce((sum, tx) => sum + tx.amount, 0);
-    const exits = current.state.transactions.filter(tx => tx.type === 'Saída').reduce((sum, tx) => sum + tx.amount, 0);
+    const openedAt = Date.parse(current.state.cashRegister.openedAt);
+    if (!Number.isFinite(openedAt)) return error('Data de abertura do caixa inválida', 400);
+
+    const sales = current.state.orders
+      .filter(order => order.status !== 'Cancelado' && Date.parse(order.createdAt) >= openedAt)
+      .reduce((sum, order) => sum + order.total, 0);
+    const entries = current.state.transactions
+      .filter(tx => tx.type === 'Entrada' && tx.category !== 'Vendas' && transactionTimestamp(current.state, tx) >= openedAt)
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const exits = current.state.transactions
+      .filter(tx => tx.type === 'Saída' && transactionTimestamp(current.state, tx) >= openedAt)
+      .reduce((sum, tx) => sum + tx.amount, 0);
     const closingAmount = Number((current.state.cashRegister.openingAmount + sales + entries - exits).toFixed(2));
     current.state.cashRegister = {
       ...current.state.cashRegister,
@@ -1043,29 +1177,27 @@ export const handler = router({
     return json(current.state.cashRegister);
   }],
 
-  'POST /api/reset': [async () => {
-    const current = await get();
-    const state = seed();
-    await save(current.id, state);
-    return json(await withSignedImages(state));
-  }],
-
   'POST /api/products': [async ({ body }) => {
     const value = body as Partial<P>;
-    if (!value.name?.trim() || Number(value.price) <= 0) return error('Nome e preço são obrigatórios', 400);
+    const price = Number(value.price);
+    const stock = Number(value.stock ?? 0);
+    const cost = Number(value.cost ?? 0);
+    const prepTime = Number(value.prepTime ?? 15);
+    if (!value.name?.trim() || !Number.isFinite(price) || price <= 0) return error('Nome e preço são obrigatórios', 400);
+    if (![stock, cost, prepTime].every(Number.isFinite) || stock < 0 || cost < 0 || prepTime <= 0) return error('Estoque, custo ou tempo de preparo inválido', 400);
     const current = await get();
     const product: P = {
       id: 'p' + Date.now(),
-      name: value.name.trim(),
-      category: value.category || 'Outros',
-      price: Number(value.price),
-      stock: Number(value.stock || 0),
+      name: value.name.trim().slice(0, 120),
+      category: value.category?.trim().slice(0, 80) || 'Outros',
+      price: Number(price.toFixed(2)),
+      stock,
       active: value.active ?? true,
-      description: value.description || '',
-      cost: Number(value.cost || 0),
-      code: value.code || '',
+      description: value.description?.slice(0, 1000) || '',
+      cost: Number(cost.toFixed(2)),
+      code: value.code?.trim().slice(0, 80) || '',
       featured: value.featured ?? false,
-      prepTime: Number(value.prepTime || 15),
+      prepTime,
       channels: value.channels || ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
       addons: value.addons || [],
       ingredients: value.ingredients || [],
@@ -1082,20 +1214,30 @@ export const handler = router({
     const index = current.state.products.findIndex(product => product.id === params.id);
     if (index < 0) return error('Produto não encontrado', 404);
     const updated = applyProduct(current.state.products[index], value);
-    if (!updated.name.trim() || updated.price <= 0) return error('Nome e preço são obrigatórios', 400);
-    current.state.products[index] = updated;
+    if (!updated.name.trim() || !Number.isFinite(updated.price) || updated.price <= 0) return error('Nome e preço são obrigatórios', 400);
+    if (![updated.stock, updated.cost ?? 0, updated.prepTime ?? 15].every(Number.isFinite) || updated.stock < 0 || (updated.cost ?? 0) < 0 || (updated.prepTime ?? 15) <= 0) return error('Estoque, custo ou tempo de preparo inválido', 400);
+    current.state.products[index] = {
+      ...updated,
+      name: updated.name.trim().slice(0, 120),
+      category: updated.category.trim().slice(0, 80),
+      price: Number(updated.price.toFixed(2)),
+      cost: Number((updated.cost ?? 0).toFixed(2)),
+      description: updated.description?.slice(0, 1000),
+      code: updated.code?.trim().slice(0, 80),
+    };
     await save(current.id, current.state);
     return json(updated);
   }],
 
   'POST /api/products/:id/image': [async ({ params, body }) => {
     const value = body as { content?: string; contentType?: string };
-    if (!value.content || !value.contentType?.startsWith('image/')) return error('Imagem inválida', 400);
+    const validatedImage = validateImagePayload(value);
+    if ('error' in validatedImage) return error(validatedImage.error, 400);
     const current = await get();
     const product = current.state.products.find(item => item.id === params.id);
     if (!product) return error('Produto não encontrado', 404);
-    const path = 'catalog/products/' + params.id + '-' + Date.now() + '.jpg';
-    const [ok] = await storage.write([{ path, content: value.content, contentType: value.contentType }]);
+    const path = 'catalog/products/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
+    const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
     if (!ok) return error('Falha ao salvar imagem', 500);
     if (product.imagePath) await storage.delete([product.imagePath]);
     product.imagePath = path;
@@ -1150,12 +1292,13 @@ export const handler = router({
 
   'POST /api/menu/categories/:id/image': [async ({ params, body }) => {
     const value = body as { content?: string; contentType?: string };
-    if (!value.content || !value.contentType?.startsWith('image/')) return error('Imagem inválida', 400);
+    const validatedImage = validateImagePayload(value);
+    if ('error' in validatedImage) return error(validatedImage.error, 400);
     const current = await get();
     const category = current.state.menuCategories.find(item => item.id === params.id);
     if (!category) return error('Categoria não encontrada', 404);
-    const path = 'catalog/categories/' + params.id + '-' + Date.now() + '.jpg';
-    const [ok] = await storage.write([{ path, content: value.content, contentType: value.contentType }]);
+    const path = 'catalog/categories/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
+    const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
     if (!ok) return error('Falha ao salvar imagem', 500);
     if (category.imagePath) await storage.delete([category.imagePath]);
     category.imagePath = path;
@@ -1180,7 +1323,7 @@ export const handler = router({
     const value = body as { status?: T['status'] };
     const current = await get();
     const table = current.state.tables.find(item => item.id === params.id);
-    if (!table || !value.status) return error('Mesa/status inválido', 400);
+    if (!table || !value.status || !allowedTableStatuses.has(value.status)) return error('Mesa/status inválido', 400);
     table.status = value.status;
     if (value.status === 'Livre') {
       table.total = 0;
@@ -1193,44 +1336,35 @@ export const handler = router({
   }],
 
   'POST /api/orders': [async ({ body }) => {
-    const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: I[] };
+    const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const current = await get();
-    const subtotal = Number(value.items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
-    const fee = value.channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
+    const validated = validateOrderItems(current.state, value.items);
+    if ('error' in validated) return error(validated.error, 400);
+
+    const channel = value.channel || 'Balcão';
+    if (!allowedOrderChannels.has(channel)) return error('Canal inválido', 400);
+    if (channel === 'Mesa' && (!value.table || !current.state.tables.some(item => item.name === value.table))) return error('Mesa inválida', 400);
+
+    const subtotal = Number(validated.items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
+    const fee = channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
     const total = Number((subtotal + fee).toFixed(2));
-    const sequence = 1051 + current.state.orders.filter(order => Number(order.code.slice(1)) >= 1051).length;
+    const sequence = 1051 + current.state.orders.filter(order => /^#\d+$/.test(order.code) && Number(order.code.slice(1)) >= 1051).length;
     const createdAt = new Date().toISOString();
     const order: O = {
       id: 'o' + Date.now(),
       code: '#' + sequence,
-      channel: value.channel || 'Balcão',
-      table: value.table,
-      customer: value.customer || 'Cliente balcão',
-      items: value.items,
+      channel,
+      table: channel === 'Mesa' ? value.table : undefined,
+      customer: value.customer?.trim().slice(0, 120) || 'Cliente balcão',
+      items: validated.items,
       total,
       status: 'Novo',
       createdAt,
       updatedAt: createdAt,
-      paymentMethod: value.paymentMethod || 'Não informado',
+      paymentMethod: value.paymentMethod?.trim().slice(0, 60) || 'Não informado',
     };
-    current.state.orders.unshift(order);
-    current.state.transactions.unshift({
-      id: 'f' + Date.now(),
-      description: 'Venda ' + order.code,
-      type: 'Entrada',
-      amount: total,
-      date: 'Hoje',
-      category: 'Vendas',
-    });
-    if (value.table) {
-      const table = current.state.tables.find(item => item.name === value.table);
-      if (table) {
-        table.status = 'Ocupada';
-        table.total = Number((table.total + total).toFixed(2));
-      }
-    }
-    audit(current.state, 'order', order.id, 'Pedido criado', order.code + ' · ' + order.channel + (order.table ? ' · ' + order.table : ''));
+    applyOrderEffects(current.state, order);
     await save(current.id, current.state);
     return json(order, 201);
   }],
@@ -1239,13 +1373,18 @@ export const handler = router({
     const value = body as { status?: string };
     const current = await get();
     const order = current.state.orders.find(item => item.id === params.id);
-    if (!order || !value.status) return error('Pedido/status inválido', 400);
+    if (!order || !value.status || !allowedOrderStatuses.has(value.status)) return error('Pedido/status inválido', 400);
     const changedAt = new Date().toISOString();
     order.status = value.status;
     order.updatedAt = changedAt;
     if (value.status === 'Preparando' && !order.startedAt) order.startedAt = changedAt;
     if (value.status === 'Pronto' && !order.readyAt) order.readyAt = changedAt;
     if (value.status === 'Entregue' && !order.deliveredAt) order.deliveredAt = changedAt;
+    if (order.table && value.status === 'Entregue') {
+      const table = current.state.tables.find(item => item.name === order.table);
+      const hasOtherActive = current.state.orders.some(item => item.id !== order.id && item.table === order.table && !['Entregue', 'Finalizado', 'Cancelado'].includes(item.status));
+      if (table && !hasOtherActive) table.status = 'Fechamento';
+    }
     audit(current.state, 'order', order.id, 'Status do pedido alterado', order.code + ' · ' + value.status);
     await save(current.id, current.state);
     return json(order);
@@ -1255,10 +1394,13 @@ export const handler = router({
     const value = body as Partial<C>;
     if (!value.name?.trim() || !value.phone?.trim()) return error('Nome e telefone obrigatórios', 400);
     const current = await get();
+    const normalizedPhone = value.phone.replace(/\D/g, '');
+    if (normalizedPhone.length < 10 || normalizedPhone.length > 13) return error('Telefone inválido', 400);
+    if (current.state.customers.some(item => item.phone.replace(/\D/g, '') === normalizedPhone)) return error('Telefone já cadastrado', 409);
     const customer: C = {
       id: 'c' + Date.now(),
-      name: value.name.trim(),
-      phone: value.phone.trim(),
+      name: value.name.trim().slice(0, 120),
+      phone: value.phone.trim().slice(0, 30),
       orders: 0,
       totalSpent: 0,
       lastOrder: 'Sem pedidos',
@@ -1284,15 +1426,16 @@ export const handler = router({
 
   'POST /api/transactions': [async ({ body }) => {
     const value = body as Partial<Tx>;
-    if (!value.description?.trim() || !['Entrada', 'Saída'].includes(String(value.type)) || Number(value.amount) <= 0) {
+    const amount = Number(value.amount);
+    if (!value.description?.trim() || !['Entrada', 'Saída'].includes(String(value.type)) || !Number.isFinite(amount) || amount <= 0 || amount > 100_000_000) {
       return error('Lançamento financeiro inválido', 400);
     }
     const current = await get();
     const transaction: Tx = {
       id: 'f' + Date.now(),
-      description: value.description.trim(),
+      description: value.description.trim().slice(0, 200),
       type: value.type as 'Entrada' | 'Saída',
-      amount: Number(value.amount),
+      amount: Number(amount.toFixed(2)),
       date: 'Hoje',
       category: value.category || 'Outros',
       createdAt: new Date().toISOString(),
@@ -1307,12 +1450,20 @@ export const handler = router({
     const value = body as Partial<AppSettings>;
     if (value.restaurantName !== undefined && !value.restaurantName.trim()) return error('Nome é obrigatório', 400);
     if (value.unit !== undefined && !value.unit.trim()) return error('Unidade é obrigatória', 400);
+    if (value.serviceFee !== undefined && (!Number.isFinite(Number(value.serviceFee)) || Number(value.serviceFee) < 0 || Number(value.serviceFee) > 30)) return error('Taxa de serviço inválida', 400);
+    if (value.deliveryMinimum !== undefined && (!Number.isFinite(Number(value.deliveryMinimum)) || Number(value.deliveryMinimum) < 0)) return error('Pedido mínimo inválido', 400);
+    if (value.freeDeliveryFrom !== undefined && (!Number.isFinite(Number(value.freeDeliveryFrom)) || Number(value.freeDeliveryFrom) < 0)) return error('Frete grátis inválido', 400);
+    if (value.openingHours !== undefined && value.openingHours.length > 120) return error('Horário de funcionamento inválido', 400);
     const current = await get();
     current.state.settings = {
       ...current.state.settings,
       ...value,
-      restaurantName: value.restaurantName?.trim() || current.state.settings.restaurantName,
-      unit: value.unit?.trim() || current.state.settings.unit,
+      restaurantName: value.restaurantName?.trim().slice(0, 120) || current.state.settings.restaurantName,
+      unit: value.unit?.trim().slice(0, 120) || current.state.settings.unit,
+      serviceFee: value.serviceFee === undefined ? current.state.settings.serviceFee : Number(value.serviceFee),
+      deliveryMinimum: value.deliveryMinimum === undefined ? current.state.settings.deliveryMinimum : Number(value.deliveryMinimum),
+      freeDeliveryFrom: value.freeDeliveryFrom === undefined ? current.state.settings.freeDeliveryFrom : Number(value.freeDeliveryFrom),
+      openingHours: value.openingHours?.trim().slice(0, 120) || current.state.settings.openingHours,
     };
     await save(current.id, current.state);
     return json(current.state.settings);

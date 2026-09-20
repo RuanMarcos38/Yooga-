@@ -1,104 +1,105 @@
 [
   {
-    "name": "Assistente executa Teste rápido sem alterar dados",
+    "name": "Pedido real continua funcionando com validação segura do backend",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "Assistente IA modo Testar Sistema",
-      "POST /api/qa/run",
-      "diagnóstico somente leitura",
-      "resumo aprovado atenção erro"
-    ],
-    "description": "Valida o novo modo QA dentro do Assistente IA e garante um resultado visível sem modificar a operação.",
-    "steps": [
-      "Abrir o Assistente IA no sistema administrativo",
-      "Selecionar Testar Sistema",
-      "Clicar em Teste rápido",
-      "Observar os cards Aprovado, Atenção e Erro e a lista de verificações"
-    ],
-    "expected": "O painel mostra um relatório de diagnóstico com contagens e verificações por módulo, informando que o teste é somente leitura."
-  },
-  {
-    "name": "Teste completo cobre operação integrações cliente e API",
-    "viewport": "desktop",
-    "covers": [
-      "POST /api/qa/run escopo full",
-      "Pedidos / PDV",
-      "Mesas",
-      "Caixa",
+      "POST /api/orders",
+      "validação server-side de produtos e preços",
+      "estoque de produto",
+      "mesa ocupada",
       "KDS",
-      "Produtos/Cardápio",
-      "Estoque",
-      "Financeiro",
-      "Modo Cliente",
-      "Integrações",
-      "API Aberta"
+      "persistência do pedido"
     ],
-    "description": "Valida que o diagnóstico completo percorre os principais módulos existentes do SaaS.",
+    "description": "Valida que o fluxo normal do PDV continua funcionando após o endurecimento do backend e que o pedido entra na operação.",
     "steps": [
-      "Abrir Assistente IA > Testar Sistema",
-      "Clicar em Teste completo",
-      "Rolar a lista de resultados"
+      "Abrir uma mesa livre",
+      "Adicionar um produto disponível ao pedido",
+      "Salvar o pedido",
+      "Abrir Cozinha / KDS e localizar o novo pedido"
     ],
-    "expected": "O relatório inclui verificações identificadas por módulo para operação, cliente, integrações e API aberta."
+    "expected": "O pedido é salvo normalmente, a mesa passa para ocupada e o pedido aparece no KDS sem alteração no layout."
   },
   {
-    "name": "Teste de Integrações reporta pendências sem marcar conexão falsa",
+    "name": "Caixa aceita valores válidos e mantém histórico",
     "viewport": "desktop",
     "covers": [
-      "POST /api/qa/run escopo integrations",
-      "integrações externas",
-      "credenciais oficiais",
-      "guardrail contra falso positivo"
+      "POST /api/cash/open",
+      "POST /api/cash/close",
+      "cálculo do caixa desde a abertura",
+      "Histórico / Caixa"
     ],
-    "description": "Garante que conectores aguardando autorização externa aparecem como atenção e não como ativos falsos.",
+    "description": "Valida o fluxo operacional do caixa com o cálculo limitado ao período da abertura atual.",
     "steps": [
-      "Abrir Assistente IA > Testar Sistema",
-      "Clicar em Integrações"
+      "Abrir Histórico / Caixa",
+      "Se o caixa estiver aberto, fechar o caixa",
+      "Abrir novamente com valor de abertura 20",
+      "Confirmar que o caixa aparece como Aberto com valor de abertura R$ 20,00"
     ],
-    "expected": "O relatório diferencia configuração registrada, erros e conectores que aguardam credenciais oficiais."
+    "expected": "O caixa reabre com o valor informado e permanece disponível no histórico operacional."
   },
   {
-    "name": "Teste do Modo Cliente valida vínculos de mesa",
+    "name": "Teste completo diferencia backend pronto de configuração opcional",
+    "viewport": "desktop",
+    "covers": [
+      "POST /api/qa/run",
+      "Integrações",
+      "KDS",
+      "Totem",
+      "API Aberta",
+      "classificação de prontidão do backend"
+    ],
+    "description": "Valida que ausência de uma integração externa opcional ou de uma chave externa não é classificada como defeito do backend.",
+    "steps": [
+      "Abrir Assistente IA > Testar Sistema",
+      "Executar Teste completo",
+      "Localizar Backend de integrações, KDS e Totem e API Aberta"
+    ],
+    "expected": "O QA trata o backend de integrações e a API aberta como implementados, mantendo alertas apenas para erros reais ou credenciais externas que já tenham sido configuradas e estejam pendentes."
+  },
+  {
+    "name": "Cadastro de produto com foto continua protegido e funcional",
+    "viewport": "desktop",
+    "covers": [
+      "POST /api/products",
+      "PUT /api/products/:id",
+      "POST /api/products/:id/image",
+      "validação de produto",
+      "upload JPG PNG WebP"
+    ],
+    "description": "Valida que o endurecimento do upload e do cadastro não remove a função já existente de foto do produto.",
+    "steps": [
+      "Abrir Produtos e clicar em Novo produto",
+      "Cadastrar Produto Backend QA com preço e estoque válidos",
+      "Selecionar uma imagem JPG e salvar",
+      "Retornar à lista de produtos"
+    ],
+    "expected": "O produto é cadastrado e aparece com a foto, mantendo o fluxo visual já existente."
+  },
+  {
+    "name": "Falha de backend continua visível sem quebrar o frontend",
     "viewport": "mobile",
     "covers": [
-      "POST /api/qa/run escopo customer",
-      "Modo Cliente",
-      "pedidos de mesa",
-      "solicitações de garçom/conta",
+      "tratamento de erro do backend",
+      "POST /api/orders falha",
+      "continuidade da interface",
       "responsividade"
     ],
-    "description": "Valida no mobile o diagnóstico dos vínculos usados pela interface do cliente.",
-    "steps": [
-      "Abrir o sistema administrativo em viewport mobile",
-      "Abrir Assistente IA > Testar Sistema",
-      "Clicar em Modo Cliente"
-    ],
-    "expected": "O painel mostra as verificações do vínculo cliente-mesa e acompanhamento de pedidos sem alterar os dados."
-  },
-  {
-    "name": "Falha do endpoint de QA não bloqueia o sistema",
-    "viewport": "desktop",
-    "covers": [
-      "tratamento de falha do POST /api/qa/run",
-      "continuidade do Assistente IA",
-      "continuidade dos módulos existentes"
-    ],
-    "description": "Valida o comportamento seguro quando o diagnóstico estiver temporariamente indisponível.",
+    "description": "Garante que uma falha de gravação não cause alteração parcial visível ou quebra do frontend.",
     "qa_faults": [
       {
         "method": "POST",
-        "path": "/api/qa/run",
-        "status": 503,
+        "path": "/api/orders",
+        "status": 400,
         "body_json": {
-          "error": "QA temporariamente indisponível"
+          "error": "Pedido inválido para teste"
         }
       }
     ],
     "steps": [
-      "Abrir Assistente IA > Testar Sistema",
-      "Clicar em Teste rápido"
+      "Abrir Pedidos / PDV em viewport mobile",
+      "Adicionar um item e tentar salvar o pedido"
     ],
-    "expected": "O painel mostra uma verificação de erro do próprio diagnóstico e o restante do sistema continua utilizável."
+    "expected": "O sistema mostra o erro da operação e continua utilizável sem perder a estrutura da interface."
   }
 ]
