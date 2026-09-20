@@ -1,107 +1,102 @@
 [
   {
-    "name": "Cliente conectado à mesa solicita garçom e equipe atende",
+    "name": "Chamado de garçom fica vermelho e aparece no Dashboard",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "Modo Cliente da mesa",
-      "GET /api/customer/table/:code",
+      "Dashboard operacional em tempo real",
+      "quantidade de chamados de garçom",
+      "mesa vermelha com alerta",
+      "botão Chamar garçom por mesa",
       "POST /api/customer/table/:code/request",
-      "PUT /api/service-requests/:id/resolve",
-      "solicitação de garçom",
-      "integração com tela de Mesas"
+      "PUT /api/service-requests/:id/resolve"
     ],
-    "description": "Valida o diferencial de atendimento conectado: o cliente acessa a mesa por link, chama o garçom e a equipe recebe e encerra a solicitação.",
+    "description": "Valida o fluxo crítico de atendimento: uma mesa chama o garçom, fica vermelha e o Dashboard contabiliza o alerta até a equipe atender.",
     "steps": [
-      "Abrir Mesas e usar Link cliente da Mesa 01",
-      "Abrir o link do cliente da Mesa 01",
-      "Clicar em Chamar garçom",
-      "Voltar ao sistema administrativo e abrir Mesas",
-      "Confirmar o aviso Cliente chamou o garçom na Mesa 01 e clicar em Atender"
+      "Abrir Mesas e clicar em Chamar garçom na Mesa 03",
+      "Confirmar que a Mesa 03 fica vermelha com Garçom solicitado",
+      "Abrir Dashboard e confirmar que Chamar garçom mostra pelo menos 1 alerta",
+      "No Dashboard clicar em Atender no alerta da Mesa 03",
+      "Voltar para Mesas"
     ],
-    "expected": "A solicitação aparece na Mesa 01 e deixa de ficar pendente depois de Atender."
+    "expected": "O chamado deixa de ficar pendente e a Mesa 03 não permanece vermelha após o atendimento."
   },
   {
-    "name": "Operar caixa e relatório de histórico",
+    "name": "Dashboard mostra métricas operacionais dos pedidos",
     "viewport": "desktop",
     "covers": [
-      "Histórico / Caixa",
-      "POST /api/transactions",
-      "POST /api/cash/close",
-      "POST /api/cash/open",
-      "relatório de vendas",
-      "vendas por formas de pagamento",
-      "movimentações"
+      "quantidade de pedidos",
+      "quantidade de mesas ocupadas",
+      "tempo médio de atendimento",
+      "tempo médio de espera",
+      "pedidos em andamento",
+      "histórico operacional"
     ],
-    "description": "Valida o resumo do caixa e os três relatórios solicitados a partir do layout de referência.",
+    "description": "Valida que o Dashboard apresenta as métricas solicitadas e uma visão operacional consolidada.",
     "steps": [
-      "Abrir Histórico / Caixa",
-      "Adicionar uma entrada Caixa QA de R$ 10",
-      "Abrir a aba Movimentações e confirmar Caixa QA",
-      "Fechar o caixa",
-      "Abrir novamente o caixa com R$ 20 de abertura",
-      "Abrir Vendas por Formas de Pagamento"
+      "Abrir Dashboard",
+      "Confirmar os cartões Pedidos, Mesas ocupadas, Tempo atendimento e Tempo de espera",
+      "Confirmar a seção Pedidos em andamento",
+      "Confirmar a seção Histórico operacional"
     ],
-    "expected": "A entrada aparece nas movimentações, o caixa pode ser fechado e reaberto, e o relatório por forma de pagamento permanece disponível."
+    "expected": "O Dashboard exibe números e tempos operacionais, além de pedidos ativos e histórico recente."
   },
   {
-    "name": "Pedido da mesa muda de status e cliente acompanha",
+    "name": "Mudança de status alimenta tempos e histórico",
     "viewport": "desktop",
     "covers": [
-      "PDV de mesa",
       "API POST /api/orders",
       "API PUT /api/orders/:id/status",
+      "timestamps operacionais",
       "KDS",
-      "acompanhamento de pedido no Modo Cliente"
+      "Dashboard em tempo real"
     ],
-    "description": "Valida que o status operacional do KDS é refletido no portal conectado do cliente.",
+    "description": "Valida o registro de tempo desde criação até preparo/pronto/entrega e sua disponibilidade para métricas.",
     "steps": [
-      "Abrir Mesa 02 e adicionar Smash Bacon",
-      "Salvar o pedido",
+      "Abrir uma mesa e criar um pedido com Smash Bacon",
       "Abrir Cozinha / KDS e avançar o pedido de Novo para Preparando",
-      "Abrir o link do cliente da Mesa 02",
-      "Confirmar que o último pedido mostra Preparando"
+      "Avançar o mesmo pedido para Pronto",
+      "Avançar o mesmo pedido para Entregue",
+      "Abrir Dashboard"
     ],
-    "expected": "O portal da Mesa 02 mostra o mesmo status Preparando definido no KDS."
+    "expected": "O histórico registra as mudanças e o Dashboard permanece funcional com métricas de tempo calculadas."
   },
   {
-    "name": "Cadastrar produto com foto e usar no cardápio",
+    "name": "Modo Cliente continua enviando alerta para a operação",
+    "viewport": "mobile",
+    "covers": [
+      "Modo Cliente",
+      "atualização automática",
+      "chamada de garçom pelo cliente",
+      "responsividade mobile",
+      "alerta na mesa"
+    ],
+    "description": "Garante que o fluxo do cliente continua integrado à nova visão operacional e funciona em celular.",
+    "steps": [
+      "Abrir o link do cliente da Mesa 01 em viewport mobile",
+      "Clicar em Chamar garçom",
+      "Retornar à interface administrativa",
+      "Abrir Mesas e localizar Mesa 01"
+    ],
+    "expected": "A Mesa 01 aparece em vermelho com o chamado de garçom pendente."
+  },
+  {
+    "name": "Cadastro com foto e módulos existentes continuam preservados",
     "viewport": "desktop",
     "covers": [
       "Produtos",
-      "API POST /api/products",
-      "API POST /api/products/:id/image",
-      "storage de imagem",
-      "cardápio da mesa"
+      "upload de foto",
+      "cardápio",
+      "Histórico / Caixa",
+      "regressão dos módulos existentes"
     ],
-    "description": "Mantém coberto o cadastro de produto com foto após a expansão do sistema.",
+    "description": "Verifica que a evolução do Dashboard não remove os recursos já implementados.",
     "steps": [
-      "Abrir Produtos e cadastrar Produto Foto QA com preço 15 e estoque 10",
-      "Selecionar uma imagem JPEG e salvar",
-      "Abrir uma mesa",
-      "Localizar Produto Foto QA no cardápio"
+      "Abrir Produtos e confirmar que Novo produto continua disponível",
+      "Abrir Montar cardápio",
+      "Abrir Histórico / Caixa",
+      "Abrir Mesas"
     ],
-    "expected": "Produto Foto QA aparece no cardápio com a foto cadastrada."
-  },
-  {
-    "name": "Configurações continuam responsivas e persistentes",
-    "viewport": "mobile",
-    "covers": [
-      "Configurações",
-      "API PUT /api/settings",
-      "QR Code",
-      "totem",
-      "pagamentos",
-      "responsividade"
-    ],
-    "description": "Garante que a inclusão do caixa e do modo cliente não altere as configurações existentes.",
-    "steps": [
-      "Abrir Configurações",
-      "Alterar a taxa de serviço para 12",
-      "Ativar Totem de autoatendimento",
-      "Salvar configuração geral",
-      "Retornar à tela e confirmar os valores"
-    ],
-    "expected": "Taxa de serviço e Totem continuam persistidos em viewport móvel."
+    "expected": "Produtos, cardápio, caixa e mesas continuam acessíveis e funcionais após a atualização."
   }
 ]

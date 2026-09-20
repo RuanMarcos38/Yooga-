@@ -99,7 +99,7 @@ type AppSettings = {
 };
 type Table = { id: string; name: string; seats: number; status: 'Livre' | 'Ocupada' | 'Aguardando' | 'Fechamento'; total: number; waiter?: string };
 type Item = { productId: string; name: string; qty: number; price: number };
-type Order = { id: string; code: string; channel: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; paymentMethod?: string };
+type Order = { id: string; code: string; channel: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; updatedAt?: string; startedAt?: string; readyAt?: string; deliveredAt?: string; paymentMethod?: string };
 type Customer = { id: string; name: string; phone: string; orders: number; totalSpent: number; lastOrder: string };
 type Stock = { id: string; name: string; unit: string; current: number; minimum: number; cost: number };
 type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string; createdAt?: string };
@@ -264,6 +264,18 @@ function AdminApp() {
   };
 
   useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await api.get('/api/state');
+        setData(response.data as State);
+      } catch {
+        // Keep the last valid operational snapshot if a background refresh fails.
+      }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(''), 2400);
@@ -491,7 +503,8 @@ type ViewProps = {
 };
 
 function PageView(props: ViewProps) {
-  if (props.page === 'dashboard' || props.page === 'pdv') return <OrderingWorkspace {...props} />;
+  if (props.page === 'dashboard') return <OperationalDashboard {...props} />;
+  if (props.page === 'pdv') return <OrderingWorkspace {...props} />;
   if (props.page === 'tables') return <TablesView {...props} />;
   if (props.page === 'history') return <HistoryView {...props} />;
   if (props.page === 'menu') return <MenuBuilderView {...props} />;
@@ -503,6 +516,178 @@ function PageView(props: ViewProps) {
   if (props.page === 'customers') return <CustomersView {...props} />;
   if (props.page === 'reports') return <ReportsView {...props} />;
   return <SettingsView {...props} />;
+}
+
+function OperationalDashboard(props: ViewProps) {
+  const now = Date.now();
+  const activeOrders = props.data.orders.filter(order => !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status));
+  const occupiedTables = props.data.tables.filter(table => table.status !== 'Livre');
+  const pendingWaiter = props.data.serviceRequests.filter(request => request.status === 'pending' && request.type === 'waiter');
+  const pendingBills = props.data.serviceRequests.filter(request => request.status === 'pending' && request.type === 'bill');
+  const delayedOrders = activeOrders.filter(order => {
+    const elapsed = now - new Date(order.startedAt || order.createdAt).getTime();
+    const expected = Math.max(...order.items.map(item => props.data.products.find(product => product.id === item.productId)?.prepTime || 15), 15);
+    return elapsed > expected * 60000;
+  });
+
+  const completedServiceTimes = props.data.orders
+    .filter(order => order.deliveredAt)
+    .map(order => new Date(order.deliveredAt as string).getTime() - new Date(order.createdAt).getTime())
+    .filter(value => value >= 0);
+  const fallbackServiceTimes = activeOrders.map(order => now - new Date(order.createdAt).getTime()).filter(value => value >= 0);
+  const serviceTimes = completedServiceTimes.length ? completedServiceTimes : fallbackServiceTimes;
+  const averageService = serviceTimes.length ? serviceTimes.reduce((sum, value) => sum + value, 0) / serviceTimes.length : 0;
+
+  const waitTimes = props.data.orders
+    .map(order => {
+      if (order.startedAt) return new Date(order.startedAt).getTime() - new Date(order.createdAt).getTime();
+      if (order.status === 'Novo') return now - new Date(order.createdAt).getTime();
+      return 0;
+    })
+    .filter(value => value > 0);
+  const averageWait = waitTimes.length ? waitTimes.reduce((sum, value) => sum + value, 0) / waitTimes.length : 0;
+
+  const tableElapsed = (tableName: string) => {
+    const orders = activeOrders.filter(order => order.table === tableName);
+    if (!orders.length) return 0;
+    const earliest = Math.min(...orders.map(order => new Date(order.createdAt).getTime()));
+    return Math.max(0, now - earliest);
+  };
+
+  const pendingFor = (tableName: string) => props.data.serviceRequests.filter(request => request.table === tableName && request.status === 'pending');
+
+  const resolveRequest = async (request: ServiceRequest) => {
+    await props.run(
+      () => api.put('/api/service-requests/' + request.id + '/resolve', {}),
+      request.type === 'bill' ? 'Solicitação de conta atendida.' : 'Chamada de garçom atendida.'
+    );
+  };
+
+  return (
+    <section className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="mr-auto">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold">Dashboard Operacional</h1>
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[9px] font-bold text-emerald-700"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />Tempo real</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">Pedidos, mesas, atendimento, alertas e histórico atualizados automaticamente.</p>
+        </div>
+        <button onClick={() => props.setPage('tables')} className="rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white">Abrir mesas</button>
+        <button onClick={() => props.setPage('history')} className="rounded-xl border border-[#dedbd6] bg-white px-4 py-3 text-xs font-semibold">Histórico / Caixa</button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        <OpsMetric icon={<ShoppingBag size={18} />} label="Pedidos" value={String(props.data.orders.length)} detail={activeOrders.length + ' ativo(s)'} />
+        <OpsMetric icon={<Utensils size={18} />} label="Mesas ocupadas" value={String(occupiedTables.length)} detail={'de ' + props.data.tables.length + ' mesas'} />
+        <OpsMetric icon={<Clock3 size={18} />} label="Tempo atendimento" value={formatOperationalTime(averageService)} detail="média da operação" />
+        <OpsMetric icon={<History size={18} />} label="Tempo de espera" value={formatOperationalTime(averageWait)} detail="até iniciar preparo" />
+        <OpsMetric icon={<Bell size={18} />} label="Chamar garçom" value={String(pendingWaiter.length)} detail="chamado(s) pendente(s)" alert={pendingWaiter.length > 0} />
+        <OpsMetric icon={<ReceiptText size={18} />} label="Contas solicitadas" value={String(pendingBills.length)} detail={delayedOrders.length + ' pedido(s) atrasado(s)'} alert={pendingBills.length > 0 || delayedOrders.length > 0} />
+      </div>
+
+      {(pendingWaiter.length > 0 || pendingBills.length > 0 || delayedOrders.length > 0) && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <section className="rounded-xl border border-red-200 bg-red-50 p-4">
+            <div className="mb-3 flex items-center gap-2"><AlertTriangle size={17} className="text-red-500" /><div><b className="block text-sm text-red-700">Alertas de atendimento</b><small className="text-[10px] text-red-500">Priorize mesas em vermelho.</small></div></div>
+            <div className="space-y-2">
+              {[...pendingWaiter, ...pendingBills].slice(0, 8).map(request => (
+                <div key={request.id} className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-red-100 text-red-600">{request.type === 'bill' ? <ReceiptText size={16} /> : <Bell size={16} />}</span>
+                  <span className="min-w-0 flex-1"><b className="block text-xs">{request.table}</b><small className="text-[9px] text-slate-400">{request.type === 'bill' ? 'Solicitou a conta' : 'Chamou o garçom'} · {formatOperationalTime(now - new Date(request.createdAt).getTime())}</small></span>
+                  <button onClick={() => void resolveRequest(request)} className="rounded-lg bg-red-500 px-3 py-2 text-[9px] font-bold text-white">Atender</button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="mb-3 flex items-center gap-2"><Clock3 size={17} className="text-amber-600" /><div><b className="block text-sm text-amber-800">Pedidos acima do tempo</b><small className="text-[10px] text-amber-600">Pedidos que ultrapassaram o tempo estimado do cardápio.</small></div></div>
+            <div className="space-y-2">
+              {delayedOrders.slice(0, 8).map(order => (
+                <button key={order.id} onClick={() => props.setPage('kds')} className="flex w-full items-center gap-3 rounded-lg bg-white p-3 text-left shadow-sm">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-amber-700"><ChefHat size={16} /></span>
+                  <span className="min-w-0 flex-1"><b className="block text-xs">{order.code} {order.table ? '· ' + order.table : ''}</b><small className="text-[9px] text-slate-400">{order.status} · {formatOperationalTime(now - new Date(order.startedAt || order.createdAt).getTime())}</small></span>
+                  <span className="text-[9px] font-bold text-amber-700">Ver KDS</span>
+                </button>
+              ))}
+              {delayedOrders.length === 0 && <p className="text-xs text-amber-700">Nenhum pedido acima do tempo esperado.</p>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      <div className="grid gap-4 xl:grid-cols-[1.35fr_.65fr]">
+        <section className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_10px_28px_rgba(46,42,38,0.04)]">
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div><h2 className="text-sm font-bold">Mesas em tempo real</h2><p className="text-[10px] text-slate-400">Clique para abrir a mesa. Chamados pendentes ficam vermelhos.</p></div>
+            <span className="text-[9px] text-slate-400">{occupiedTables.length} ocupada(s) · {pendingWaiter.length + pendingBills.length} alerta(s)</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {props.data.tables.map(table => {
+              const requests = pendingFor(table.name);
+              const hasAlert = requests.length > 0;
+              const elapsed = tableElapsed(table.name);
+              return (
+                <button key={table.id} onClick={() => props.openTableOrder(table.name)} className={'relative rounded-xl border-2 p-3 text-left transition hover:-translate-y-0.5 ' + (hasAlert ? 'border-red-500 bg-red-50 shadow-[0_8px_20px_rgba(239,68,68,.12)]' : table.status === 'Livre' ? 'border-slate-200 bg-slate-50' : 'border-emerald-300 bg-emerald-50')}>
+                  {hasAlert && <span className="absolute right-2 top-2 h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />}
+                  <div className="flex items-center gap-2"><Utensils size={14} className={hasAlert ? 'text-red-600' : table.status === 'Livre' ? 'text-slate-400' : 'text-emerald-600'} /><b className="text-xs">{table.name}</b></div>
+                  <div className="mt-2 flex items-center justify-between text-[9px]"><span>{table.status}</span><span>{elapsed > 0 ? formatOperationalTime(elapsed) : 'Livre'}</span></div>
+                  {hasAlert && <div className="mt-2 rounded-lg bg-red-500 px-2 py-1.5 text-[9px] font-bold text-white">{requests.some(request => request.type === 'waiter') ? 'GARÇOM SOLICITADO' : 'CONTA SOLICITADA'}</div>}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_10px_28px_rgba(46,42,38,0.04)]">
+          <div className="mb-4 flex items-end justify-between"><div><h2 className="text-sm font-bold">Histórico operacional</h2><p className="text-[10px] text-slate-400">Últimas ações registradas.</p></div><button onClick={() => props.setPage('history')} className="text-[9px] font-bold text-[#159fe5]">Ver tudo</button></div>
+          <div className="max-h-[430px] space-y-1 overflow-auto">
+            {props.data.auditLog.slice(0, 12).map(event => (
+              <div key={event.id} className="flex items-start gap-3 border-t py-3 first:border-t-0">
+                <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#eef7fb] text-[#178fc5]"><History size={13} /></span>
+                <span className="min-w-0 flex-1"><b className="block text-[10px]">{event.action}</b><small className="block truncate text-[9px] text-slate-400">{event.detail}</small></span>
+                <small className="shrink-0 text-[8px] text-slate-400">{new Date(event.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4">
+        <div className="mb-4 flex items-end justify-between gap-3"><div><h2 className="text-sm font-bold">Pedidos em andamento</h2><p className="text-[10px] text-slate-400">Visão operacional do salão, balcão e delivery.</p></div><button onClick={() => props.setPage('kds')} className="text-[9px] font-bold text-[#f45f3f]">Abrir KDS</button></div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-[10px]">
+            <thead className="border-b text-slate-400"><tr><th className="pb-3">Pedido</th><th>Mesa/Canal</th><th>Status</th><th>Itens</th><th>Tempo atual</th><th>Valor</th></tr></thead>
+            <tbody>{activeOrders.slice(0, 12).map(order => (
+              <tr key={order.id} className="border-b border-[#f0efec]">
+                <td className="py-3 font-bold">{order.code}</td>
+                <td>{order.table || order.channel}</td>
+                <td><Badge value={order.status} /></td>
+                <td>{order.items.reduce((sum, item) => sum + item.qty, 0)}</td>
+                <td>{formatOperationalTime(now - new Date(order.createdAt).getTime())}</td>
+                <td className="font-bold">{BRL(order.total)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {activeOrders.length === 0 && <p className="py-8 text-center text-xs text-slate-400">Nenhum pedido em andamento.</p>}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function OpsMetric({ icon, label, value, detail, alert }: { icon: ReactNode; label: string; value: string; detail: string; alert?: boolean }) {
+  return <div className={'rounded-xl border p-4 shadow-[0_6px_18px_rgba(46,42,38,.035)] ' + (alert ? 'border-red-300 bg-red-50' : 'border-[#ebe7e2] bg-[#fffefa]')}><div className="flex items-start justify-between gap-2"><span className={'grid h-9 w-9 place-items-center rounded-lg ' + (alert ? 'bg-red-100 text-red-600' : 'bg-[#fff2ee] text-[#e85b3a]')}>{icon}</span>{alert && <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />}</div><strong className="mt-4 block text-2xl tracking-[-.03em]">{value}</strong><span className="mt-1 block text-[10px] font-semibold">{label}</span><small className="mt-1 block text-[9px] text-slate-400">{detail}</small></div>;
+}
+
+function formatOperationalTime(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return '0 min';
+  const totalMinutes = Math.floor(ms / 60000);
+  if (totalMinutes < 60) return totalMinutes + ' min';
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours + 'h ' + String(minutes).padStart(2, '0') + 'm';
 }
 
 function OrderingWorkspace(props: ViewProps) {
@@ -1175,25 +1360,31 @@ function TablesView(props: ViewProps) {
     }
   };
 
+  const callWaiter = async (tableName: string) => {
+    const code = tableName.toUpperCase().replace(/\s+/g, '-');
+    await props.run(() => api.post('/api/customer/table/' + encodeURIComponent(code) + '/request', { type: 'waiter' }), 'Garçom chamado para ' + tableName + '.');
+  };
+
   return (
     <section>
       <div className="mb-5 flex flex-wrap items-center gap-3 border-b border-[#e3e5e6] pb-4">
         <div className="mr-auto">
           <h1 className="text-2xl font-bold text-[#282d31]">Início</h1>
-          <p className="mt-1 text-xs text-slate-400">Mesas, balcão e atendimento presencial.</p>
+          <p className="mt-1 text-xs text-slate-400">Mesas, balcão e atendimento presencial em tempo real.</p>
         </div>
+        <button onClick={() => props.setPage('dashboard')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><BarChart3 size={16} />Dashboard</button>
         <button onClick={() => props.setPage('menu')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><QrCode size={16} />Cardápio QR Code</button>
         <button onClick={() => props.setPage('history')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><History size={16} />Histórico</button>
-        <button className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><Headphones size={16} />Suporte</button>
         <button onClick={() => props.setPage('settings')} className="flex items-center gap-2 rounded-xl bg-[#79e7b1] px-4 py-3 text-xs font-semibold text-[#16653f] shadow-sm"><Store size={16} />Totem de Autoatendimento</button>
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div className="flex h-12 min-w-[280px] max-w-[380px] flex-1 items-center gap-2 rounded-xl border border-[#cfd4d7] bg-white px-4">
+        <div className="flex h-12 min-w-[260px] max-w-[420px] flex-1 items-center gap-2 rounded-xl border border-[#cfd4d7] bg-white px-4">
           <Search size={18} className="text-[#4d565b]" />
-          <span className="text-sm text-slate-400">Use a busca superior para localizar mesas</span>
+          <span className="text-sm text-slate-400">Alertas do cliente aparecem em vermelho</span>
         </div>
-        <button onClick={() => props.setPage('settings')} className="ml-auto flex h-12 items-center gap-2 rounded-xl bg-[#e4e6e7] px-5 text-xs font-semibold text-[#0e5f93]"><Settings size={16} />Configuração geral</button>
+        <div className="ml-auto flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-[9px] font-bold text-emerald-700"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />Atualização a cada 5s</div>
+        <button onClick={() => props.setPage('settings')} className="flex h-12 items-center gap-2 rounded-xl bg-[#e4e6e7] px-5 text-xs font-semibold text-[#0e5f93]"><Settings size={16} />Configuração geral</button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1201,7 +1392,7 @@ function TablesView(props: ViewProps) {
           props.setChannel('Balcão');
           props.setTable('');
           props.setPage('pdv');
-        }} className="min-h-[138px] rounded-xl border-4 border-[#12a35a] bg-[#baf2d3] p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md">
+        }} className="min-h-[154px] rounded-xl border-4 border-[#12a35a] bg-[#baf2d3] p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md">
           <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 text-[11px] font-semibold text-[#087a42]"><ShoppingBag size={14} />Aberta</span>
           <strong className="mt-5 block text-sm text-[#174d36]">BALCÃO</strong>
           <div className="mt-2 flex items-center justify-between text-xs text-[#147849]"><span>{BRL(0)}</span><span className="flex items-center gap-1"><Clock3 size={14} />Sempre aberto</span></div>
@@ -1210,6 +1401,8 @@ function TablesView(props: ViewProps) {
         {props.data.tables.map((table, index) => {
           const theme = statusTheme(table.status);
           const requests = pendingFor(table.name);
+          const hasAlert = requests.length > 0;
+          const waiterPending = requests.some(request => request.type === 'waiter');
           return (
             <div
               key={table.id}
@@ -1217,24 +1410,29 @@ function TablesView(props: ViewProps) {
               tabIndex={0}
               onClick={() => props.openTableOrder(table.name)}
               onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') props.openTableOrder(table.name); }}
-              className={'relative min-h-[138px] cursor-pointer rounded-xl border-4 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ' + theme.panel}
+              className={'relative min-h-[154px] cursor-pointer rounded-xl border-4 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ' + (hasAlert ? 'border-red-500 bg-red-100 shadow-[0_12px_28px_rgba(239,68,68,.16)]' : theme.panel)}
             >
-              <div className="flex items-start justify-between gap-2">
-                <span className={'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold ' + theme.badge}>
-                  {table.status === 'Livre' ? <Check size={14} /> : <Utensils size={14} />}
-                  {theme.label}
+              {hasAlert && <span className="absolute right-3 top-3 h-3 w-3 animate-pulse rounded-full bg-red-500 shadow-[0_0_0_5px_rgba(239,68,68,.12)]" />}
+              <div className="flex items-start justify-between gap-2 pr-5">
+                <span className={'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold ' + (hasAlert ? 'bg-red-600 text-white' : theme.badge)}>
+                  {hasAlert ? <Bell size={14} /> : table.status === 'Livre' ? <Check size={14} /> : <Utensils size={14} />}
+                  {hasAlert ? (waiterPending ? 'Garçom solicitado' : 'Conta solicitada') : theme.label}
                 </span>
-                <button onClick={event => { event.stopPropagation(); void copyCustomerLink(table.name); }} className="rounded-full bg-white/75 px-2.5 py-1.5 text-[9px] font-semibold text-[#465057] shadow-sm">Link cliente</button>
               </div>
 
-              <strong className="mt-5 block text-sm">{table.name.toUpperCase()}</strong>
-              <div className="mt-2 flex items-center justify-between text-xs">
+              <strong className={'mt-4 block text-sm ' + (hasAlert ? 'text-red-800' : '')}>{table.name.toUpperCase()}</strong>
+              <div className={'mt-2 flex items-center justify-between text-xs ' + (hasAlert ? 'text-red-700' : '')}>
                 <span>{BRL(table.total)}</span>
                 {table.status !== 'Livre' && <span className="flex items-center gap-1"><Clock3 size={14} />{index % 3 === 0 ? '4 Minutos' : index % 3 === 1 ? '11 Horas' : '12 Horas'}</span>}
               </div>
 
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={event => { event.stopPropagation(); void callWaiter(table.name); }} disabled={waiterPending} className={'rounded-lg px-2 py-2 text-[9px] font-bold ' + (waiterPending ? 'bg-red-600 text-white' : 'bg-white/80 text-[#50575c]')}><Bell size={12} className="mr-1 inline" />{waiterPending ? 'Garçom chamado' : 'Chamar garçom'}</button>
+                <button onClick={event => { event.stopPropagation(); void copyCustomerLink(table.name); }} className="rounded-lg bg-white/80 px-2 py-2 text-[9px] font-semibold text-[#465057]">Link cliente</button>
+              </div>
+
               {requests.length > 0 && (
-                <div className="mt-3 space-y-1.5">
+                <div className="mt-2 space-y-1.5">
                   {requests.map(request => (
                     <button
                       key={request.id}
@@ -1242,9 +1440,9 @@ function TablesView(props: ViewProps) {
                         event.stopPropagation();
                         void props.run(() => api.put('/api/service-requests/' + request.id + '/resolve', {}), request.type === 'bill' ? 'Solicitação de conta atendida.' : 'Chamada de garçom atendida.');
                       }}
-                      className={'flex w-full items-center justify-between rounded-lg px-3 py-2 text-[9px] font-bold ' + (request.type === 'bill' ? 'bg-rose-500 text-white' : 'bg-amber-400 text-[#5d4300]')}
+                      className="flex w-full items-center justify-between rounded-lg bg-red-600 px-3 py-2 text-[9px] font-bold text-white"
                     >
-                      <span>{request.type === 'bill' ? 'Cliente solicitou a conta' : 'Cliente chamou o garçom'}</span>
+                      <span>{request.type === 'bill' ? 'Conta solicitada' : 'Garçom solicitado'}</span>
                       <span>Atender</span>
                     </button>
                   ))}

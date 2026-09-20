@@ -70,6 +70,10 @@ type O = {
   total: number;
   status: string;
   createdAt: string;
+  updatedAt?: string;
+  startedAt?: string;
+  readyAt?: string;
+  deliveredAt?: string;
   paymentMethod?: string;
 };
 type C = {
@@ -275,7 +279,10 @@ function normalizeState(raw: Partial<S>): S {
     })),
     menuCategories: raw.menuCategories?.length ? raw.menuCategories : base.menuCategories,
     tables: raw.tables || base.tables,
-    orders: raw.orders || base.orders,
+    orders: (raw.orders || base.orders).map(order => ({
+      updatedAt: order.createdAt,
+      ...order,
+    })),
     customers: raw.customers || base.customers,
     stock: raw.stock || base.stock,
     transactions: raw.transactions || base.transactions,
@@ -602,6 +609,7 @@ export const handler = router({
     const fee = value.channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
     const total = Number((subtotal + fee).toFixed(2));
     const sequence = 1051 + current.state.orders.filter(order => Number(order.code.slice(1)) >= 1051).length;
+    const createdAt = new Date().toISOString();
     const order: O = {
       id: 'o' + Date.now(),
       code: '#' + sequence,
@@ -611,7 +619,8 @@ export const handler = router({
       items: value.items,
       total,
       status: 'Novo',
-      createdAt: new Date().toISOString(),
+      createdAt,
+      updatedAt: createdAt,
       paymentMethod: value.paymentMethod || 'Não informado',
     };
     current.state.orders.unshift(order);
@@ -640,7 +649,12 @@ export const handler = router({
     const current = await get();
     const order = current.state.orders.find(item => item.id === params.id);
     if (!order || !value.status) return error('Pedido/status inválido', 400);
+    const changedAt = new Date().toISOString();
     order.status = value.status;
+    order.updatedAt = changedAt;
+    if (value.status === 'Preparando' && !order.startedAt) order.startedAt = changedAt;
+    if (value.status === 'Pronto' && !order.readyAt) order.readyAt = changedAt;
+    if (value.status === 'Entregue' && !order.deliveredAt) order.deliveredAt = changedAt;
     audit(current.state, 'order', order.id, 'Status do pedido alterado', order.code + ' · ' + value.status);
     await save(current.id, current.state);
     return json(order);
