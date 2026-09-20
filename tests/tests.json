@@ -1,104 +1,107 @@
 [
   {
-    "name": "Cadastrar produto com foto pela tela Produtos",
+    "name": "Cliente conectado à mesa solicita garçom e equipe atende",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
+      "Modo Cliente da mesa",
+      "GET /api/customer/table/:code",
+      "POST /api/customer/table/:code/request",
+      "PUT /api/service-requests/:id/resolve",
+      "solicitação de garçom",
+      "integração com tela de Mesas"
+    ],
+    "description": "Valida o diferencial de atendimento conectado: o cliente acessa a mesa por link, chama o garçom e a equipe recebe e encerra a solicitação.",
+    "steps": [
+      "Abrir Mesas e usar Link cliente da Mesa 01",
+      "Abrir o link do cliente da Mesa 01",
+      "Clicar em Chamar garçom",
+      "Voltar ao sistema administrativo e abrir Mesas",
+      "Confirmar o aviso Cliente chamou o garçom na Mesa 01 e clicar em Atender"
+    ],
+    "expected": "A solicitação aparece na Mesa 01 e deixa de ficar pendente depois de Atender."
+  },
+  {
+    "name": "Operar caixa e relatório de histórico",
+    "viewport": "desktop",
+    "covers": [
+      "Histórico / Caixa",
+      "POST /api/transactions",
+      "POST /api/cash/close",
+      "POST /api/cash/open",
+      "relatório de vendas",
+      "vendas por formas de pagamento",
+      "movimentações"
+    ],
+    "description": "Valida o resumo do caixa e os três relatórios solicitados a partir do layout de referência.",
+    "steps": [
+      "Abrir Histórico / Caixa",
+      "Adicionar uma entrada Caixa QA de R$ 10",
+      "Abrir a aba Movimentações e confirmar Caixa QA",
+      "Fechar o caixa",
+      "Abrir novamente o caixa com R$ 20 de abertura",
+      "Abrir Vendas por Formas de Pagamento"
+    ],
+    "expected": "A entrada aparece nas movimentações, o caixa pode ser fechado e reaberto, e o relatório por forma de pagamento permanece disponível."
+  },
+  {
+    "name": "Pedido da mesa muda de status e cliente acompanha",
+    "viewport": "desktop",
+    "covers": [
+      "PDV de mesa",
+      "API POST /api/orders",
+      "API PUT /api/orders/:id/status",
+      "KDS",
+      "acompanhamento de pedido no Modo Cliente"
+    ],
+    "description": "Valida que o status operacional do KDS é refletido no portal conectado do cliente.",
+    "steps": [
+      "Abrir Mesa 02 e adicionar Smash Bacon",
+      "Salvar o pedido",
+      "Abrir Cozinha / KDS e avançar o pedido de Novo para Preparando",
+      "Abrir o link do cliente da Mesa 02",
+      "Confirmar que o último pedido mostra Preparando"
+    ],
+    "expected": "O portal da Mesa 02 mostra o mesmo status Preparando definido no KDS."
+  },
+  {
+    "name": "Cadastrar produto com foto e usar no cardápio",
+    "viewport": "desktop",
+    "covers": [
       "Produtos",
-      "cadastro completo de produto",
-      "seleção e pré-visualização de foto",
       "API POST /api/products",
       "API POST /api/products/:id/image",
-      "storage de imagem do produto",
-      "persistência da foto"
+      "storage de imagem",
+      "cardápio da mesa"
     ],
-    "description": "Valida que o botão Novo produto da tela Produtos abre o cadastro completo e permite vincular uma foto real ao item sem alterar o restante do sistema.",
+    "description": "Mantém coberto o cadastro de produto com foto após a expansão do sistema.",
     "steps": [
-      "Abrir Produtos e clicar em Novo produto",
-      "Preencher Produto Foto QA com categoria Bebidas, preço 15 e estoque 10",
-      "Selecionar uma imagem JPEG de teste no campo Foto do produto e confirmar a pré-visualização",
-      "Salvar o produto",
-      "Retornar à lista de Produtos"
+      "Abrir Produtos e cadastrar Produto Foto QA com preço 15 e estoque 10",
+      "Selecionar uma imagem JPEG e salvar",
+      "Abrir uma mesa",
+      "Localizar Produto Foto QA no cardápio"
     ],
-    "expected": "Produto Foto QA aparece na lista com a imagem escolhida e indicação de foto própria."
+    "expected": "Produto Foto QA aparece no cardápio com a foto cadastrada."
   },
   {
-    "name": "Abrir uma mesa, lançar produto e salvar pedido",
-    "viewport": "desktop",
-    "covers": [
-      "tela de mesas no formato operacional",
-      "abertura do PDV pela mesa",
-      "cardápio por categorias",
-      "API POST /api/orders",
-      "taxa de serviço",
-      "KDS"
-    ],
-    "description": "Valida que a melhoria do cadastro de produtos não interfere no atendimento das mesas.",
-    "steps": [
-      "Abrir Mesas",
-      "Clicar na Mesa 01",
-      "No cardápio da mesa clicar em Smash Bacon",
-      "Salvar o pedido",
-      "Abrir Cozinha / KDS"
-    ],
-    "expected": "O pedido da Mesa 01 é salvo com o produto e aparece como novo pedido no KDS."
-  },
-  {
-    "name": "Editar produto e trocar a foto",
-    "viewport": "desktop",
-    "covers": [
-      "Produtos",
-      "API PUT /api/products/:id",
-      "API POST /api/products/:id/image",
-      "substituição de foto",
-      "edição de produto"
-    ],
-    "description": "Valida que um produto existente pode ser aberto diretamente pela tela Produtos e receber uma nova imagem.",
-    "steps": [
-      "Abrir Produtos",
-      "Clicar em Editar no Smash Bacon",
-      "Selecionar uma nova imagem de teste no campo Foto do produto",
-      "Salvar produto",
-      "Retornar à lista"
-    ],
-    "expected": "Smash Bacon continua cadastrado e passa a exibir a nova foto na lista de Produtos."
-  },
-  {
-    "name": "Salvar configuração operacional em mobile",
+    "name": "Configurações continuam responsivas e persistentes",
     "viewport": "mobile",
     "covers": [
       "Configurações",
       "API PUT /api/settings",
-      "taxa de serviço",
       "QR Code",
       "totem",
       "pagamentos",
       "responsividade"
     ],
-    "description": "Valida que a alteração da tela Produtos não afeta as configurações e a experiência móvel.",
+    "description": "Garante que a inclusão do caixa e do modo cliente não altere as configurações existentes.",
     "steps": [
       "Abrir Configurações",
       "Alterar a taxa de serviço para 12",
       "Ativar Totem de autoatendimento",
-      "Manter Pix ativo",
-      "Salvar configuração geral"
+      "Salvar configuração geral",
+      "Retornar à tela e confirmar os valores"
     ],
-    "expected": "As configurações ficam salvas e continuam visíveis ao retornar à tela."
-  },
-  {
-    "name": "Bloquear pedido vazio na mesa",
-    "viewport": "desktop",
-    "covers": [
-      "guardrail de pedido vazio",
-      "PDV de mesa"
-    ],
-    "description": "Garante que uma mesa não consiga salvar um pedido sem itens.",
-    "steps": [
-      "Abrir Mesas",
-      "Clicar em uma mesa livre",
-      "Não adicionar nenhum produto",
-      "Observar o botão Salvar"
-    ],
-    "expected": "O botão Salvar permanece desabilitado enquanto o pedido da mesa estiver vazio."
+    "expected": "Taxa de serviço e Totem continuam persistidos em viewport móvel."
   }
 ]

@@ -95,7 +95,11 @@ type Tx = {
   amount: number;
   date: string;
   category: string;
+  createdAt?: string;
 };
+type CashRegister = { status: 'Aberto' | 'Fechado'; openingAmount: number; openedAt: string; closedAt?: string; closingAmount?: number };
+type ServiceRequest = { id: string; table: string; type: 'waiter' | 'bill'; status: 'pending' | 'resolved'; createdAt: string; resolvedAt?: string };
+type AuditEvent = { id: string; entity: string; entityId: string; action: string; detail: string; user: string; createdAt: string };
 type S = {
   products: P[];
   menuCategories: MenuCategory[];
@@ -104,6 +108,9 @@ type S = {
   customers: C[];
   stock: StockItem[];
   transactions: Tx[];
+  cashRegister: CashRegister;
+  serviceRequests: ServiceRequest[];
+  auditLog: AuditEvent[];
   settings: AppSettings;
 };
 
@@ -242,10 +249,15 @@ const seed = (): S => ({
     cost: Number(value[5]),
   })),
   transactions: [
-    { id: 'f1', description: 'Vendas do dia', type: 'Entrada', amount: 2847.6, date: 'Hoje', category: 'Vendas' },
-    { id: 'f2', description: 'Fornecedor de carnes', type: 'Saída', amount: 680, date: 'Hoje', category: 'Compras' },
-    { id: 'f3', description: 'iFood / delivery', type: 'Entrada', amount: 934.2, date: 'Ontem', category: 'Delivery' },
-    { id: 'f4', description: 'Energia elétrica', type: 'Saída', amount: 412.8, date: 'Ontem', category: 'Despesas' },
+    { id: 'f1', description: 'Vendas do dia', type: 'Entrada', amount: 2847.6, date: 'Hoje', category: 'Vendas', createdAt: new Date().toISOString() },
+    { id: 'f2', description: 'Fornecedor de carnes', type: 'Saída', amount: 680, date: 'Hoje', category: 'Compras', createdAt: new Date().toISOString() },
+    { id: 'f3', description: 'iFood / delivery', type: 'Entrada', amount: 934.2, date: 'Ontem', category: 'Delivery', createdAt: new Date(Date.now() - 86400000).toISOString() },
+    { id: 'f4', description: 'Energia elétrica', type: 'Saída', amount: 412.8, date: 'Ontem', category: 'Despesas', createdAt: new Date(Date.now() - 86400000).toISOString() },
+  ],
+  cashRegister: { status: 'Aberto', openingAmount: 0, openedAt: new Date().toISOString() },
+  serviceRequests: [],
+  auditLog: [
+    { id: 'a1', entity: 'cash', entityId: 'cash', action: 'Caixa aberto', detail: 'Abertura inicial da operação', user: 'Administrador', createdAt: new Date().toISOString() },
   ],
 });
 
@@ -267,6 +279,9 @@ function normalizeState(raw: Partial<S>): S {
     customers: raw.customers || base.customers,
     stock: raw.stock || base.stock,
     transactions: raw.transactions || base.transactions,
+    cashRegister: raw.cashRegister || base.cashRegister,
+    serviceRequests: raw.serviceRequests || [],
+    auditLog: raw.auditLog || base.auditLog,
     settings: { ...base.settings, ...(raw.settings || {}) },
   };
 }
@@ -303,6 +318,24 @@ async function withSignedImages(state: S): Promise<S> {
   };
 }
 
+function audit(state: S, entity: string, entityId: string, action: string, detail: string, user = 'Administrador') {
+  state.auditLog.unshift({
+    id: 'a' + Date.now() + Math.random().toString(36).slice(2, 6),
+    entity,
+    entityId,
+    action,
+    detail,
+    user,
+    createdAt: new Date().toISOString(),
+  });
+  state.auditLog = state.auditLog.slice(0, 200);
+}
+
+function tableFromCode(state: S, code: string) {
+  const normalized = decodeURIComponent(code).replace(/-/g, ' ').trim().toLowerCase();
+  return state.tables.find(table => table.name.toLowerCase() === normalized);
+}
+
 function applyProduct(product: P, value: Partial<P>): P {
   return {
     ...product,
@@ -326,6 +359,91 @@ function applyProduct(product: P, value: Partial<P>): P {
 export const handler = router({
   'GET /api/_healthcheck': [async () => json({ message: 'Success' })],
   'GET /api/state': [async () => json(await withSignedImages((await get()).state))],
+
+  'GET /api/customer/table/:code': [async ({ params }) => {
+    const current = await get();
+    const table = tableFromCode(current.state, params.code);
+    if (!table) return error('Mesa não encontrada', 404);
+    const orders = current.state.orders
+      .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const pendingRequests = current.state.serviceRequests.filter(request => request.table === table.name && request.status === 'pending');
+    return json({
+      store: {
+        restaurantName: current.state.settings.restaurantName,
+        unit: current.state.settings.unit,
+        serviceFee: current.state.settings.serviceFee,
+        automaticServiceFee: current.state.settings.automaticServiceFee,
+      },
+      table,
+      orders,
+      pendingRequests,
+    });
+  }],
+
+  'POST /api/customer/table/:code/request': [async ({ params, body }) => {
+    const value = body as { type?: 'waiter' | 'bill' };
+    if (!value.type || !['waiter', 'bill'].includes(value.type)) return error('Solicitação inválida', 400);
+    const current = await get();
+    const table = tableFromCode(current.state, params.code);
+    if (!table) return error('Mesa não encontrada', 404);
+    const existing = current.state.serviceRequests.find(request => request.table === table.name && request.type === value.type && request.status === 'pending');
+    if (existing) return json(existing);
+    const request: ServiceRequest = {
+      id: 'sr' + Date.now(),
+      table: table.name,
+      type: value.type,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    current.state.serviceRequests.unshift(request);
+    audit(current.state, 'table', table.id, value.type === 'bill' ? 'Conta solicitada pelo cliente' : 'Garçom solicitado pelo cliente', table.name, 'Cliente');
+    await save(current.id, current.state);
+    return json(request, 201);
+  }],
+
+  'PUT /api/service-requests/:id/resolve': [async ({ params }) => {
+    const current = await get();
+    const request = current.state.serviceRequests.find(item => item.id === params.id);
+    if (!request) return error('Solicitação não encontrada', 404);
+    request.status = 'resolved';
+    request.resolvedAt = new Date().toISOString();
+    audit(current.state, 'table', request.table, 'Solicitação atendida', (request.type === 'bill' ? 'Conta' : 'Garçom') + ' · ' + request.table);
+    await save(current.id, current.state);
+    return json(request);
+  }],
+
+  'POST /api/cash/open': [async ({ body }) => {
+    const value = body as { openingAmount?: number };
+    const current = await get();
+    if (current.state.cashRegister.status === 'Aberto') return error('Caixa já está aberto', 400);
+    current.state.cashRegister = {
+      status: 'Aberto',
+      openingAmount: Number(value.openingAmount || 0),
+      openedAt: new Date().toISOString(),
+    };
+    audit(current.state, 'cash', 'cash', 'Caixa aberto', 'Valor de abertura ' + Number(value.openingAmount || 0).toFixed(2));
+    await save(current.id, current.state);
+    return json(current.state.cashRegister);
+  }],
+
+  'POST /api/cash/close': [async () => {
+    const current = await get();
+    if (current.state.cashRegister.status === 'Fechado') return error('Caixa já está fechado', 400);
+    const sales = current.state.orders.filter(order => order.status !== 'Cancelado').reduce((sum, order) => sum + order.total, 0);
+    const entries = current.state.transactions.filter(tx => tx.type === 'Entrada' && tx.category !== 'Vendas').reduce((sum, tx) => sum + tx.amount, 0);
+    const exits = current.state.transactions.filter(tx => tx.type === 'Saída').reduce((sum, tx) => sum + tx.amount, 0);
+    const closingAmount = Number((current.state.cashRegister.openingAmount + sales + entries - exits).toFixed(2));
+    current.state.cashRegister = {
+      ...current.state.cashRegister,
+      status: 'Fechado',
+      closedAt: new Date().toISOString(),
+      closingAmount,
+    };
+    audit(current.state, 'cash', 'cash', 'Caixa fechado', 'Saldo de fechamento ' + closingAmount.toFixed(2));
+    await save(current.id, current.state);
+    return json(current.state.cashRegister);
+  }],
 
   'POST /api/reset': [async () => {
     const current = await get();
@@ -471,6 +589,7 @@ export const handler = router({
       table.waiter = undefined;
     }
     if (value.status === 'Ocupada' && !table.waiter) table.waiter = 'Equipe';
+    audit(current.state, 'table', table.id, 'Status da mesa alterado', table.name + ' · ' + value.status);
     await save(current.id, current.state);
     return json(table);
   }],
@@ -511,6 +630,7 @@ export const handler = router({
         table.total = Number((table.total + total).toFixed(2));
       }
     }
+    audit(current.state, 'order', order.id, 'Pedido criado', order.code + ' · ' + order.channel + (order.table ? ' · ' + order.table : ''));
     await save(current.id, current.state);
     return json(order, 201);
   }],
@@ -521,6 +641,7 @@ export const handler = router({
     const order = current.state.orders.find(item => item.id === params.id);
     if (!order || !value.status) return error('Pedido/status inválido', 400);
     order.status = value.status;
+    audit(current.state, 'order', order.id, 'Status do pedido alterado', order.code + ' · ' + value.status);
     await save(current.id, current.state);
     return json(order);
   }],
@@ -569,8 +690,10 @@ export const handler = router({
       amount: Number(value.amount),
       date: 'Hoje',
       category: value.category || 'Outros',
+      createdAt: new Date().toISOString(),
     };
     current.state.transactions.unshift(transaction);
+    audit(current.state, 'cash', transaction.id, transaction.type + ' adicionada ao caixa', transaction.description + ' · ' + transaction.amount.toFixed(2));
     await save(current.id, current.state);
     return json(transaction, 201);
   }],

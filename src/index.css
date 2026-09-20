@@ -51,3 +51,15 @@ button {
   background: #f7d5cc;
   color: #3b2d29;
 }
+
+
+@media print {
+  aside,
+  header,
+  button {
+    print-color-adjust: exact;
+  }
+  body {
+    background: #fff;
+  }
+}

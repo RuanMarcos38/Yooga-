@@ -102,7 +102,10 @@ type Item = { productId: string; name: string; qty: number; price: number };
 type Order = { id: string; code: string; channel: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; paymentMethod?: string };
 type Customer = { id: string; name: string; phone: string; orders: number; totalSpent: number; lastOrder: string };
 type Stock = { id: string; name: string; unit: string; current: number; minimum: number; cost: number };
-type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string };
+type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string; createdAt?: string };
+type CashRegister = { status: 'Aberto' | 'Fechado'; openingAmount: number; openedAt: string; closedAt?: string; closingAmount?: number };
+type ServiceRequest = { id: string; table: string; type: 'waiter' | 'bill'; status: 'pending' | 'resolved'; createdAt: string; resolvedAt?: string };
+type AuditEvent = { id: string; entity: string; entityId: string; action: string; detail: string; user: string; createdAt: string };
 type State = {
   products: Product[];
   menuCategories: MenuCategory[];
@@ -111,9 +114,12 @@ type State = {
   customers: Customer[];
   stock: Stock[];
   transactions: Tx[];
+  cashRegister: CashRegister;
+  serviceRequests: ServiceRequest[];
+  auditLog: AuditEvent[];
   settings: AppSettings;
 };
-type Page = 'dashboard' | 'pdv' | 'tables' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
+type Page = 'dashboard' | 'pdv' | 'tables' | 'history' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
 
 const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ACCENT = '#f45f3f';
@@ -122,6 +128,7 @@ const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['dashboard', 'Dashboard', LayoutDashboard],
   ['pdv', 'Pedidos / PDV', ShoppingBag],
   ['tables', 'Mesas', Utensils],
+  ['history', 'Histórico / Caixa', History],
   ['menu', 'Montar cardápio', Grid3X3],
   ['kds', 'Cozinha / KDS', ChefHat],
   ['delivery', 'Delivery', Bike],
@@ -164,6 +171,9 @@ const empty: State = {
   customers: [],
   stock: [],
   transactions: [],
+  cashRegister: { status: 'Aberto', openingAmount: 0, openedAt: new Date().toISOString() },
+  serviceRequests: [],
+  auditLog: [],
   settings: defaultSettings,
 };
 
@@ -206,6 +216,12 @@ const badgeClass = (value: string) => {
 };
 
 export default function MesaApp() {
+  const customerCode = new URLSearchParams(window.location.search).get('cliente');
+  if (customerCode) return <CustomerPortal code={customerCode} />;
+  return <AdminApp />;
+}
+
+function AdminApp() {
   const [page, setPage] = useState<Page>('dashboard');
   const [data, setData] = useState<State>(empty);
   const [loading, setLoading] = useState(true);
@@ -477,6 +493,7 @@ type ViewProps = {
 function PageView(props: ViewProps) {
   if (props.page === 'dashboard' || props.page === 'pdv') return <OrderingWorkspace {...props} />;
   if (props.page === 'tables') return <TablesView {...props} />;
+  if (props.page === 'history') return <HistoryView {...props} />;
   if (props.page === 'menu') return <MenuBuilderView {...props} />;
   if (props.page === 'kds') return <KdsView {...props} />;
   if (props.page === 'delivery') return <DeliveryView {...props} />;
@@ -634,7 +651,17 @@ function TableOrderWorkspace(props: ViewProps) {
           <input value={props.search} readOnly placeholder="Buscar" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
           <Search size={18} className="text-[#50585c]" />
         </label>
-        <button onClick={() => props.setPage('reports')} className="grid h-11 w-11 place-items-center rounded-full text-[#535c60] hover:bg-white"><History size={20} /></button>
+        <button onClick={() => props.setPage('history')} className="grid h-11 w-11 place-items-center rounded-full text-[#535c60] hover:bg-white"><History size={20} /></button>
+        <button onClick={async () => {
+          const code = props.table.toUpperCase().replace(/\s+/g, '-');
+          const link = window.location.origin + window.location.pathname + '?cliente=' + encodeURIComponent(code);
+          try {
+            await navigator.clipboard.writeText(link);
+            alert('Link do cliente copiado: ' + link);
+          } catch {
+            window.prompt('Copie o link do cliente:', link);
+          }
+        }} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#246486]">Conectar cliente</button>
       </div>
 
       <div className="grid min-h-[620px] gap-4 xl:grid-cols-[330px_1fr]">
@@ -1002,13 +1029,122 @@ function QuickIcon({ icon }: { icon: ReactNode }) {
   return <button className="grid h-12 place-items-center rounded-xl bg-[#f4f5f5] text-[#566066]">{icon}</button>;
 }
 
+type CustomerPortalData = {
+  store: { restaurantName: string; unit: string; serviceFee: number; automaticServiceFee: boolean };
+  table: Table;
+  orders: Order[];
+  pendingRequests: ServiceRequest[];
+};
+
+function CustomerPortal({ code }: { code: string }) {
+  const [data, setData] = useState<CustomerPortalData | null>(null);
+  const [error, setError] = useState('');
+  const [requesting, setRequesting] = useState('');
+  const lastStatuses = useRef<Record<string, string>>({});
+
+  const load = async () => {
+    try {
+      const response = await api.get('/api/customer/table/' + encodeURIComponent(code));
+      const next = response.data as CustomerPortalData;
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        next.orders.forEach(order => {
+          const previous = lastStatuses.current[order.id];
+          if (previous && previous !== order.status) {
+            new Notification(next.store.restaurantName, { body: order.code + ' agora está: ' + order.status });
+          }
+          lastStatuses.current[order.id] = order.status;
+        });
+      } else {
+        next.orders.forEach(order => { lastStatuses.current[order.id] = order.status; });
+      }
+      setData(next);
+      setError('');
+    } catch {
+      setError('Não foi possível localizar esta mesa. Confira o link recebido do estabelecimento.');
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [code]);
+
+  const enableNotifications = async () => {
+    if (typeof Notification === 'undefined') return;
+    await Notification.requestPermission();
+  };
+
+  const sendRequest = async (type: 'waiter' | 'bill') => {
+    setRequesting(type);
+    try {
+      await api.post('/api/customer/table/' + encodeURIComponent(code) + '/request', { type });
+      await load();
+    } finally {
+      setRequesting('');
+    }
+  };
+
+  if (error) return <div className="grid min-h-screen place-items-center bg-[#f6f5f2] p-6"><div className="max-w-md rounded-2xl bg-white p-6 text-center shadow-lg"><AlertTriangle className="mx-auto text-amber-500" /><h1 className="mt-3 text-lg font-bold">Mesa não encontrada</h1><p className="mt-2 text-sm text-slate-500">{error}</p></div></div>;
+  if (!data) return <div className="grid min-h-screen place-items-center bg-[#f6f5f2] text-sm text-slate-400">Conectando à mesa...</div>;
+
+  const current = data.orders[0];
+  const statusSteps = ['Novo', 'Preparando', 'Pronto', 'Entregue'];
+  const currentIndex = current ? Math.max(0, statusSteps.indexOf(current.status)) : -1;
+  const subtotal = data.orders.reduce((sum, order) => sum + order.total, 0);
+  const hasWaiter = data.pendingRequests.some(request => request.type === 'waiter');
+  const hasBill = data.pendingRequests.some(request => request.type === 'bill');
+
+  return (
+    <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
+      <header className="border-b bg-[#fffefa] px-4 py-4 shadow-sm">
+        <div className="mx-auto flex max-w-3xl items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-[#f45f3f] text-white"><Utensils size={18} /></span>
+          <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · Portal do Cliente</small></div>
+          <button onClick={() => void enableNotifications()} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#276584]"><Bell size={14} className="mr-1 inline" />Notificações</button>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-3xl space-y-4 p-4">
+        <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><small className="text-slate-400">Você está conectado em</small><h1 className="text-2xl font-bold">{data.table.name}</h1></div>
+            <span className={'rounded-full px-3 py-1.5 text-[10px] font-bold ' + (data.table.status === 'Livre' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700')}>{data.table.status}</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#f7f7f5] p-3"><small className="text-slate-400">Total da mesa</small><b className="mt-1 block text-lg">{BRL(data.table.total || subtotal)}</b></div><div className="rounded-xl bg-[#f7f7f5] p-3"><small className="text-slate-400">Pedidos ativos</small><b className="mt-1 block text-lg">{data.orders.length}</b></div></div>
+        </section>
+
+        {current ? (
+          <section className="rounded-2xl bg-white p-5">
+            <div className="flex items-center justify-between gap-3"><div><small className="text-slate-400">Último pedido</small><h2 className="font-bold">{current.code}</h2></div><Badge value={current.status} /></div>
+            <div className="mt-4 grid grid-cols-4 gap-2">
+              {statusSteps.map((step, index) => <div key={step} className="text-center"><span className={'mx-auto grid h-8 w-8 place-items-center rounded-full text-[10px] font-bold ' + (index <= currentIndex ? 'bg-[#f45f3f] text-white' : 'bg-slate-100 text-slate-400')}>{index < currentIndex ? '✓' : index + 1}</span><small className="mt-1 block text-[9px] text-slate-500">{step}</small></div>)}
+            </div>
+            <div className="mt-5 border-t pt-3">{current.items.map((item, index) => <div key={index} className="flex justify-between py-2 text-xs"><span>{item.qty}x {item.name}</span><b>{BRL(item.price * item.qty)}</b></div>)}</div>
+          </section>
+        ) : <section className="rounded-2xl bg-white p-5 text-center text-sm text-slate-400">Ainda não há pedido ativo nesta mesa.</section>}
+
+        <section className="rounded-2xl bg-white p-5">
+          <h2 className="font-bold">Precisa de atendimento?</h2>
+          <p className="mt-1 text-xs text-slate-400">A equipe recebe a solicitação diretamente na tela de Mesas.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <button disabled={hasWaiter || requesting === 'waiter'} onClick={() => void sendRequest('waiter')} className="rounded-xl bg-[#f5c84b] px-4 py-4 text-sm font-bold text-[#5f4700] disabled:opacity-60">{hasWaiter ? 'Garçom já solicitado' : 'Chamar garçom'}</button>
+            <button disabled={hasBill || requesting === 'bill'} onClick={() => void sendRequest('bill')} className="rounded-xl bg-[#f45f63] px-4 py-4 text-sm font-bold text-white disabled:opacity-60">{hasBill ? 'Conta já solicitada' : 'Solicitar a conta'}</button>
+          </div>
+        </section>
+
+        <p className="pb-6 text-center text-[10px] text-slate-400">Atualização automática a cada 5 segundos. Ative as notificações para ser avisado quando o pedido mudar de etapa.</p>
+      </main>
+    </div>
+  );
+}
+
 function PayButton({ label, icon, active, onClick }: { label: string; icon: ReactNode; active: boolean; onClick: () => void }) {
   return <button onClick={onClick} className={'flex h-14 items-center justify-center gap-2 rounded-lg border text-[9px] font-bold ' + (active ? 'border-[#f45f3f] bg-[#fff3ef] text-[#e85b3a]' : 'border-[#ececf2] bg-white text-[#51586c]')}>{icon}{label}</button>;
 }
 
 function TablesView(props: ViewProps) {
-  const tableSearch = props.search.trim().toLowerCase();
-  const visibleTables = props.data.tables.filter(table => !tableSearch || table.name.toLowerCase().includes(tableSearch));
+  const pendingFor = (tableName: string) => props.data.serviceRequests.filter(request => request.table === tableName && request.status === 'pending');
 
   const statusTheme = (status: Table['status']) => {
     if (status === 'Ocupada') return {
@@ -1028,6 +1164,17 @@ function TablesView(props: ViewProps) {
     };
   };
 
+  const copyCustomerLink = async (tableName: string) => {
+    const code = tableName.toUpperCase().replace(/\s+/g, '-');
+    const link = window.location.origin + window.location.pathname + '?cliente=' + encodeURIComponent(code);
+    try {
+      await navigator.clipboard.writeText(link);
+      alert('Link do cliente copiado: ' + link);
+    } catch {
+      window.prompt('Copie o link do cliente:', link);
+    }
+  };
+
   return (
     <section>
       <div className="mb-5 flex flex-wrap items-center gap-3 border-b border-[#e3e5e6] pb-4">
@@ -1036,21 +1183,16 @@ function TablesView(props: ViewProps) {
           <p className="mt-1 text-xs text-slate-400">Mesas, balcão e atendimento presencial.</p>
         </div>
         <button onClick={() => props.setPage('menu')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><QrCode size={16} />Cardápio QR Code</button>
-        <button onClick={() => props.setPage('reports')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><History size={16} />Histórico</button>
+        <button onClick={() => props.setPage('history')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><History size={16} />Histórico</button>
         <button className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><Headphones size={16} />Suporte</button>
         <button onClick={() => props.setPage('settings')} className="flex items-center gap-2 rounded-xl bg-[#79e7b1] px-4 py-3 text-xs font-semibold text-[#16653f] shadow-sm"><Store size={16} />Totem de Autoatendimento</button>
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <label className="flex h-12 min-w-[280px] max-w-[380px] flex-1 items-center gap-2 rounded-xl border border-[#cfd4d7] bg-white px-4">
-          <input value={props.search} onChange={event => {
-            const input = event.target as HTMLInputElement;
-            const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-            native?.call(input, input.value);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-          }} placeholder="Buscar..." className="min-w-0 flex-1 bg-transparent text-sm outline-none" readOnly />
+        <div className="flex h-12 min-w-[280px] max-w-[380px] flex-1 items-center gap-2 rounded-xl border border-[#cfd4d7] bg-white px-4">
           <Search size={18} className="text-[#4d565b]" />
-        </label>
+          <span className="text-sm text-slate-400">Use a busca superior para localizar mesas</span>
+        </div>
         <button onClick={() => props.setPage('settings')} className="ml-auto flex h-12 items-center gap-2 rounded-xl bg-[#e4e6e7] px-5 text-xs font-semibold text-[#0e5f93]"><Settings size={16} />Configuração geral</button>
       </div>
 
@@ -1065,25 +1207,195 @@ function TablesView(props: ViewProps) {
           <div className="mt-2 flex items-center justify-between text-xs text-[#147849]"><span>{BRL(0)}</span><span className="flex items-center gap-1"><Clock3 size={14} />Sempre aberto</span></div>
         </button>
 
-        {visibleTables.map((table, index) => {
+        {props.data.tables.map((table, index) => {
           const theme = statusTheme(table.status);
+          const requests = pendingFor(table.name);
           return (
-            <button key={table.id} onClick={() => props.openTableOrder(table.name)} className={'min-h-[138px] rounded-xl border-4 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ' + theme.panel}>
-              <span className={'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold ' + theme.badge}>
-                {table.status === 'Livre' ? <Check size={14} /> : <Utensils size={14} />}
-                {theme.label}
-              </span>
+            <div
+              key={table.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => props.openTableOrder(table.name)}
+              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') props.openTableOrder(table.name); }}
+              className={'relative min-h-[138px] cursor-pointer rounded-xl border-4 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ' + theme.panel}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className={'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold ' + theme.badge}>
+                  {table.status === 'Livre' ? <Check size={14} /> : <Utensils size={14} />}
+                  {theme.label}
+                </span>
+                <button onClick={event => { event.stopPropagation(); void copyCustomerLink(table.name); }} className="rounded-full bg-white/75 px-2.5 py-1.5 text-[9px] font-semibold text-[#465057] shadow-sm">Link cliente</button>
+              </div>
+
               <strong className="mt-5 block text-sm">{table.name.toUpperCase()}</strong>
               <div className="mt-2 flex items-center justify-between text-xs">
                 <span>{BRL(table.total)}</span>
                 {table.status !== 'Livre' && <span className="flex items-center gap-1"><Clock3 size={14} />{index % 3 === 0 ? '4 Minutos' : index % 3 === 1 ? '11 Horas' : '12 Horas'}</span>}
               </div>
-            </button>
+
+              {requests.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  {requests.map(request => (
+                    <button
+                      key={request.id}
+                      onClick={event => {
+                        event.stopPropagation();
+                        void props.run(() => api.put('/api/service-requests/' + request.id + '/resolve', {}), request.type === 'bill' ? 'Solicitação de conta atendida.' : 'Chamada de garçom atendida.');
+                      }}
+                      className={'flex w-full items-center justify-between rounded-lg px-3 py-2 text-[9px] font-bold ' + (request.type === 'bill' ? 'bg-rose-500 text-white' : 'bg-amber-400 text-[#5d4300]')}
+                    >
+                      <span>{request.type === 'bill' ? 'Cliente solicitou a conta' : 'Cliente chamou o garçom'}</span>
+                      <span>Atender</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
     </section>
   );
+}
+
+function HistoryView(props: ViewProps) {
+  const [tab, setTab] = useState<'sales' | 'payments' | 'moves'>('sales');
+  const [query, setQuery] = useState('');
+  const cash = props.data.cashRegister;
+  const salesTotal = props.data.orders.filter(order => order.status !== 'Cancelado').reduce((sum, order) => sum + order.total, 0);
+  const manualEntries = props.data.transactions.filter(tx => tx.type === 'Entrada' && tx.category !== 'Vendas').reduce((sum, tx) => sum + tx.amount, 0);
+  const exits = props.data.transactions.filter(tx => tx.type === 'Saída').reduce((sum, tx) => sum + tx.amount, 0);
+
+  const addMovement = async (type: 'Entrada' | 'Saída') => {
+    const description = window.prompt(type === 'Entrada' ? 'Descrição da entrada' : 'Descrição da saída');
+    if (!description) return;
+    const amount = Number(window.prompt('Valor') || 0);
+    if (amount <= 0) return;
+    await props.run(() => api.post('/api/transactions', { description, type, amount, category: 'Caixa' }), type === 'Entrada' ? 'Entrada adicionada ao caixa.' : 'Saída adicionada ao caixa.');
+  };
+
+  const toggleCash = async () => {
+    if (cash.status === 'Aberto') {
+      if (!confirm('Deseja fechar o caixa agora?')) return;
+      await props.run(() => api.post('/api/cash/close', {}), 'Caixa fechado.');
+      return;
+    }
+    const openingAmount = Number(window.prompt('Valor de abertura do caixa') || 0);
+    await props.run(() => api.post('/api/cash/open', { openingAmount }), 'Caixa aberto.');
+  };
+
+  const filteredOrders = props.data.orders.filter(order => {
+    const target = [order.customer, order.code, order.channel, order.paymentMethod, order.table].filter(Boolean).join(' ').toLowerCase();
+    return !query || target.includes(query.toLowerCase());
+  });
+
+  const payments = Array.from(new Set(props.data.orders.map(order => order.paymentMethod || 'Não informado'))).map(method => ({
+    method,
+    count: props.data.orders.filter(order => (order.paymentMethod || 'Não informado') === method).length,
+    total: props.data.orders.filter(order => (order.paymentMethod || 'Não informado') === method).reduce((sum, order) => sum + order.total, 0),
+  }));
+
+  return (
+    <section className="space-y-5">
+      <div className="rounded-xl border border-[#efefef] bg-white p-6 shadow-[0_6px_24px_rgba(30,34,38,0.025)]">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="mr-auto flex items-center gap-2">
+            <h1 className="text-xl font-bold text-[#202326]">Resumo do Caixa</h1>
+            <span className={'rounded-full px-2.5 py-1 text-[10px] font-bold ' + (cash.status === 'Aberto' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>● {cash.status}</span>
+          </div>
+          <button onClick={() => window.print()} className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#159fe5]"><Printer size={17} />Imprimir</button>
+          <button onClick={() => void addMovement('Entrada')} className="flex items-center gap-2 rounded-lg bg-[#f4f4f4] px-4 py-3 text-xs font-semibold text-emerald-600"><Plus size={16} />Adicionar entrada</button>
+          <button onClick={() => void addMovement('Saída')} className="flex items-center gap-2 rounded-lg bg-[#f4f4f4] px-4 py-3 text-xs font-semibold text-rose-500"><Plus size={16} />Adicionar Saída</button>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <CashCard title="Vendas" value={salesTotal} />
+          <CashCard title="Valor de abertura" value={cash.openingAmount} />
+          <CashCard title="Entradas" value={manualEntries} positive />
+          <CashCard title="Saídas" value={exits} negative />
+        </div>
+
+        <div className="mt-6 border-t pt-6">
+          <button onClick={() => void toggleCash()} className={'w-full rounded-lg py-3.5 text-sm font-bold text-white ' + (cash.status === 'Aberto' ? 'bg-[#ff5a5f]' : 'bg-emerald-500')}>
+            {cash.status === 'Aberto' ? '▣ Quero fechar meu Caixa' : '+ Abrir meu Caixa'}
+          </button>
+          {cash.status === 'Fechado' && cash.closingAmount !== undefined && <p className="mt-2 text-center text-[10px] text-slate-400">Último fechamento: {BRL(cash.closingAmount)}</p>}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#efefef] bg-white p-6">
+        <h2 className="text-xl font-bold">Relatório de vendas</h2>
+        <div className="mt-6 flex gap-5 overflow-x-auto border-b">
+          <button onClick={() => setTab('sales')} className={'pb-3 text-sm font-semibold ' + (tab === 'sales' ? 'border-b-2 border-[#1eb0e8] text-[#159fe5]' : 'text-[#778087]')}>Vendas</button>
+          <button onClick={() => setTab('payments')} className={'pb-3 text-sm font-semibold ' + (tab === 'payments' ? 'border-b-2 border-[#1eb0e8] text-[#159fe5]' : 'text-[#778087]')}>Vendas por Formas de Pagamento</button>
+          <button onClick={() => setTab('moves')} className={'pb-3 text-sm font-semibold ' + (tab === 'moves' ? 'border-b-2 border-[#1eb0e8] text-[#159fe5]' : 'text-[#778087]')}>Movimentações</button>
+        </div>
+
+        <div className="mt-5 flex items-center gap-2">
+          <label className="flex h-11 flex-1 items-center gap-2 rounded-xl border border-[#cfd4d7] px-4">
+            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por forma de pagamento ou valor..." className="min-w-0 flex-1 text-xs outline-none" />
+            <Search size={17} className="text-[#596166]" />
+          </label>
+          <button className="flex h-11 items-center gap-1 rounded-lg border border-[#9fa7ad] px-3 text-[10px] font-semibold text-[#697178]">Filtrar <SlidersHorizontal size={14} /></button>
+        </div>
+
+        {tab === 'sales' && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[780px] text-left text-[10px]">
+              <thead className="border-b text-[#6d757b]"><tr><th className="py-3">Cliente</th><th>Data</th><th>Canal</th><th>Forma de pagamento</th><th>Valor</th><th>Vendido por</th><th>Ver detalhes</th></tr></thead>
+              <tbody>{filteredOrders.map(order => (
+                <tr key={order.id} className="border-b border-[#f0f1f2]">
+                  <td className="py-3 font-semibold">{order.customer || 'Cliente balcão'}</td>
+                  <td>{new Date(order.createdAt).toLocaleString('pt-BR')}</td>
+                  <td>{order.channel}{order.table ? ' · ' + order.table : ''}</td>
+                  <td>{order.paymentMethod || 'Não informado'}</td>
+                  <td className="font-bold">{BRL(order.total)}</td>
+                  <td>Equipe</td>
+                  <td><button onClick={() => alert(order.items.map(item => item.qty + 'x ' + item.name).join('\n'))} className="text-[#159fe5]">Detalhes</button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === 'payments' && (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {payments.map(item => <div key={item.method} className="rounded-xl border border-[#eceef0] p-4"><span className="text-[10px] text-slate-400">{item.method}</span><b className="mt-2 block text-lg">{BRL(item.total)}</b><small className="text-[9px] text-slate-400">{item.count} venda(s)</small></div>)}
+          </div>
+        )}
+
+        {tab === 'moves' && (
+          <div className="mt-4">
+            {props.data.transactions.filter(tx => !query || (tx.description + ' ' + tx.category + ' ' + tx.amount).toLowerCase().includes(query.toLowerCase())).map(tx => (
+              <DataRow key={tx.id}>
+                <span className={'grid h-9 w-9 place-items-center rounded-lg ' + (tx.type === 'Entrada' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500')}><WalletCards size={16} /></span>
+                <span className="flex-1"><b className="block text-xs">{tx.description}</b><small className="text-[9px] text-slate-400">{tx.category} · {tx.date}</small></span>
+                <b className={'text-xs ' + (tx.type === 'Entrada' ? 'text-emerald-600' : 'text-red-500')}>{tx.type === 'Entrada' ? '+' : '-'} {BRL(tx.amount)}</b>
+              </DataRow>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-[#efefef] bg-white p-6">
+        <SectionHead title="Histórico operacional" subtitle="Ações recentes em mesas, pedidos, caixa e atendimento ao cliente." />
+        <div className="space-y-1">
+          {props.data.auditLog.slice(0, 30).map(event => (
+            <div key={event.id} className="flex items-center gap-3 border-t py-3 first:border-t-0">
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-[#eef7fb] text-[#1b91c8]"><History size={14} /></span>
+              <span className="min-w-0 flex-1"><b className="block text-[10px]">{event.action}</b><small className="block truncate text-[9px] text-slate-400">{event.detail}</small></span>
+              <small className="text-[9px] text-slate-400">{new Date(event.createdAt).toLocaleString('pt-BR')}</small>
+            </div>
+          ))}
+          {props.data.auditLog.length === 0 && <p className="text-xs text-slate-400">Nenhuma movimentação registrada ainda.</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CashCard({ title, value, positive, negative }: { title: string; value: number; positive?: boolean; negative?: boolean }) {
+  return <div className="rounded-lg border border-[#dfe3e5] p-4"><div className="flex items-center gap-2"><b className="text-sm">{title}</b><span className="grid h-4 w-4 place-items-center rounded-full border text-[9px] text-slate-400">i</span></div><strong className={'mt-3 block text-xs ' + (positive ? 'text-emerald-600' : negative ? 'text-rose-500' : 'text-[#62686d]')}>{BRL(value)}</strong></div>;
 }
 
 function KdsView(props: ViewProps) {
