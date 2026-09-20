@@ -409,7 +409,7 @@ function AdminApp() {
           <button className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
           <button className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">RM</span>
-            <span className="hidden text-left md:block"><strong className="block text-[11px]">Administrador</strong><small className="block text-[9px] text-slate-400">{data.settings.unit}</small></span>
+            <span className="hidden text-left md:block"><strong className="block text-[11px]">Administrador</strong><small className="block text-[9px] text-slate-400">Modo Estabelecimento · acesso total · {data.settings.unit}</small></span>
             <ChevronDown size={14} className="text-slate-400" />
           </button>
         </header>
@@ -524,6 +524,25 @@ function OperationalDashboard(props: ViewProps) {
   const occupiedTables = props.data.tables.filter(table => table.status !== 'Livre');
   const pendingWaiter = props.data.serviceRequests.filter(request => request.status === 'pending' && request.type === 'waiter');
   const pendingBills = props.data.serviceRequests.filter(request => request.status === 'pending' && request.type === 'bill');
+  const cash = props.data.cashRegister;
+  const cashEntries = props.data.transactions.filter(tx => tx.type === 'Entrada').reduce((sum, tx) => sum + tx.amount, 0);
+  const cashExits = props.data.transactions.filter(tx => tx.type === 'Saída').reduce((sum, tx) => sum + tx.amount, 0);
+  const projectedCash = cash.openingAmount + cashEntries - cashExits;
+
+  const toggleDashboardCash = async () => {
+    if (cash.status === 'Aberto') {
+      if (!confirm('Deseja fechar o caixa agora?')) return;
+      await props.run(() => api.post('/api/cash/close', {}), 'Caixa fechado.');
+      return;
+    }
+
+    const typed = window.prompt('Valor de abertura do caixa', '0');
+    if (typed === null) return;
+    const openingAmount = Number(typed || 0);
+    if (!Number.isFinite(openingAmount) || openingAmount < 0) return;
+    await props.run(() => api.post('/api/cash/open', { openingAmount }), 'Caixa aberto.');
+  };
+
   const delayedOrders = activeOrders.filter(order => {
     const elapsed = now - new Date(order.startedAt || order.createdAt).getTime();
     const expected = Math.max(...order.items.map(item => props.data.products.find(product => product.id === item.productId)?.prepTime || 15), 15);
@@ -564,26 +583,39 @@ function OperationalDashboard(props: ViewProps) {
   };
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold">Dashboard Operacional</h1>
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[9px] font-bold text-emerald-700"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />Tempo real</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-lg font-bold md:text-xl">Dashboard Operacional</h1>
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[8px] font-bold text-emerald-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />Tempo real</span>
+            <span className="rounded-full bg-[#eef7fb] px-2 py-1 text-[8px] font-semibold text-[#246486]">Estabelecimento · acesso total</span>
           </div>
-          <p className="mt-1 text-xs text-slate-400">Pedidos, mesas, atendimento, alertas e histórico atualizados automaticamente.</p>
+          <p className="mt-1 text-[10px] text-slate-400 md:text-xs">Pedidos, mesas, atendimento, alertas e histórico atualizados automaticamente.</p>
         </div>
-        <button onClick={() => props.setPage('tables')} className="rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white">Abrir mesas</button>
-        <button onClick={() => props.setPage('history')} className="rounded-xl border border-[#dedbd6] bg-white px-4 py-3 text-xs font-semibold">Histórico / Caixa</button>
+        <button onClick={() => props.setPage('tables')} className="rounded-lg bg-[#f45f3f] px-3 py-2.5 text-[10px] font-bold text-white">Abrir mesas</button>
+        <button onClick={() => props.setPage('history')} className="rounded-lg border border-[#dedbd6] bg-white px-3 py-2.5 text-[10px] font-semibold">Histórico / Caixa</button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        <OpsMetric icon={<ShoppingBag size={18} />} label="Pedidos" value={String(props.data.orders.length)} detail={activeOrders.length + ' ativo(s)'} />
-        <OpsMetric icon={<Utensils size={18} />} label="Mesas ocupadas" value={String(occupiedTables.length)} detail={'de ' + props.data.tables.length + ' mesas'} />
-        <OpsMetric icon={<Clock3 size={18} />} label="Tempo atendimento" value={formatOperationalTime(averageService)} detail="média da operação" />
-        <OpsMetric icon={<History size={18} />} label="Tempo de espera" value={formatOperationalTime(averageWait)} detail="até iniciar preparo" />
-        <OpsMetric icon={<Bell size={18} />} label="Chamar garçom" value={String(pendingWaiter.length)} detail="chamado(s) pendente(s)" alert={pendingWaiter.length > 0} />
-        <OpsMetric icon={<ReceiptText size={18} />} label="Contas solicitadas" value={String(pendingBills.length)} detail={delayedOrders.length + ' pedido(s) atrasado(s)'} alert={pendingBills.length > 0 || delayedOrders.length > 0} />
+      <div className={'flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2.5 shadow-[0_4px_14px_rgba(46,42,38,.025)] ' + (cash.status === 'Aberto' ? 'border-emerald-200 bg-emerald-50/70' : 'border-slate-200 bg-slate-50')}>
+        <span className={'grid h-8 w-8 place-items-center rounded-lg ' + (cash.status === 'Aberto' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500')}><WalletCards size={15} /></span>
+        <div className="min-w-[120px]"><small className="block text-[8px] text-slate-400">Caixa</small><b className="text-xs">{cash.status}</b></div>
+        <div className="hidden h-7 w-px bg-black/5 sm:block" />
+        <div><small className="block text-[8px] text-slate-400">Abertura</small><b className="text-[10px]">{BRL(cash.openingAmount)}</b></div>
+        <div><small className="block text-[8px] text-slate-400">Saldo estimado</small><b className="text-[10px]">{BRL(projectedCash)}</b></div>
+        <div className="ml-auto flex gap-2">
+          <button onClick={() => props.setPage('history')} className="rounded-lg border border-[#d9d9d6] bg-white px-3 py-2 text-[9px] font-semibold">Ver caixa</button>
+          <button onClick={() => void toggleDashboardCash()} className={'rounded-lg px-3 py-2 text-[9px] font-bold text-white ' + (cash.status === 'Aberto' ? 'bg-[#ff5a5f]' : 'bg-emerald-500')}>{cash.status === 'Aberto' ? 'Fechar caixa' : 'Abrir caixa'}</button>
+        </div>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <OpsMetric icon={<ShoppingBag size={15} />} label="Pedidos" value={String(props.data.orders.length)} detail={activeOrders.length + ' ativo(s)'} />
+        <OpsMetric icon={<Utensils size={15} />} label="Mesas ocupadas" value={String(occupiedTables.length)} detail={'de ' + props.data.tables.length + ' mesas'} />
+        <OpsMetric icon={<Clock3 size={15} />} label="Tempo atendimento" value={formatOperationalTime(averageService)} detail="média da operação" />
+        <OpsMetric icon={<History size={15} />} label="Tempo de espera" value={formatOperationalTime(averageWait)} detail="desde confirmação até preparo" />
+        <OpsMetric icon={<Bell size={15} />} label="Chamar garçom" value={String(pendingWaiter.length)} detail="chamado(s) pendente(s)" alert={pendingWaiter.length > 0} />
+        <OpsMetric icon={<ReceiptText size={15} />} label="Contas solicitadas" value={String(pendingBills.length)} detail={delayedOrders.length + ' pedido(s) atrasado(s)'} alert={pendingBills.length > 0 || delayedOrders.length > 0} />
       </div>
 
       {(pendingWaiter.length > 0 || pendingBills.length > 0 || delayedOrders.length > 0) && (
@@ -678,7 +710,7 @@ function OperationalDashboard(props: ViewProps) {
 }
 
 function OpsMetric({ icon, label, value, detail, alert }: { icon: ReactNode; label: string; value: string; detail: string; alert?: boolean }) {
-  return <div className={'rounded-xl border p-4 shadow-[0_6px_18px_rgba(46,42,38,.035)] ' + (alert ? 'border-red-300 bg-red-50' : 'border-[#ebe7e2] bg-[#fffefa]')}><div className="flex items-start justify-between gap-2"><span className={'grid h-9 w-9 place-items-center rounded-lg ' + (alert ? 'bg-red-100 text-red-600' : 'bg-[#fff2ee] text-[#e85b3a]')}>{icon}</span>{alert && <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />}</div><strong className="mt-4 block text-2xl tracking-[-.03em]">{value}</strong><span className="mt-1 block text-[10px] font-semibold">{label}</span><small className="mt-1 block text-[9px] text-slate-400">{detail}</small></div>;
+  return <div className={'min-h-[112px] rounded-xl border p-3 shadow-[0_4px_14px_rgba(46,42,38,.03)] ' + (alert ? 'border-red-300 bg-red-50' : 'border-[#ebe7e2] bg-[#fffefa]')}><div className="flex items-start justify-between gap-2"><span className={'grid h-8 w-8 place-items-center rounded-lg ' + (alert ? 'bg-red-100 text-red-600' : 'bg-[#fff2ee] text-[#e85b3a]')}>{icon}</span>{alert && <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />}</div><div className="mt-2 flex items-end justify-between gap-2"><div><strong className="block text-lg tracking-[-.03em]">{value}</strong><span className="mt-0.5 block text-[9px] font-semibold">{label}</span></div><small className="max-w-[92px] text-right text-[8px] leading-3 text-slate-400">{detail}</small></div></div>;
 }
 
 function formatOperationalTime(ms: number) {
@@ -1285,12 +1317,13 @@ function CustomerPortal({ code }: { code: string }) {
       <header className="border-b bg-[#fffefa] px-4 py-4 shadow-sm">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-full bg-[#f45f3f] text-white"><Utensils size={18} /></span>
-          <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · Portal do Cliente</small></div>
+          <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · Modo Cliente · acesso limitado</small></div>
           <button onClick={() => void enableNotifications()} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#276584]"><Bell size={14} className="mr-1 inline" />Notificações</button>
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl space-y-4 p-4">
+        <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] px-3 py-2 text-[10px] text-[#35667d]"><b>Interface do Cliente:</b> acesso limitado à própria mesa, acompanhamento do pedido, notificações e solicitação de atendimento. Caixa, estoque, relatórios e configurações não aparecem nesta interface.</div>
         <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><small className="text-slate-400">Você está conectado em</small><h1 className="text-2xl font-bold">{data.table.name}</h1></div>
@@ -1387,7 +1420,7 @@ function TablesView(props: ViewProps) {
         <button onClick={() => props.setPage('settings')} className="flex h-12 items-center gap-2 rounded-xl bg-[#e4e6e7] px-5 text-xs font-semibold text-[#0e5f93]"><Settings size={16} />Configuração geral</button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="operational-scroll grid max-h-[calc(100vh-315px)] min-h-[320px] gap-3 overflow-y-auto pr-2 sm:grid-cols-2 xl:grid-cols-4">
         <button onClick={() => {
           props.setChannel('Balcão');
           props.setTable('');

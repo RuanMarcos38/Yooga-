@@ -1,102 +1,100 @@
 [
   {
-    "name": "Chamado de garçom fica vermelho e aparece no Dashboard",
+    "name": "Abrir e fechar caixa pelo Dashboard",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "Dashboard operacional em tempo real",
-      "quantidade de chamados de garçom",
-      "mesa vermelha com alerta",
+      "Dashboard compacto",
+      "status do caixa",
+      "POST /api/cash/close",
+      "POST /api/cash/open",
+      "persistência do caixa"
+    ],
+    "description": "Valida o controle de caixa diretamente no Dashboard sem depender da tela de Histórico.",
+    "steps": [
+      "Abrir o Dashboard e localizar a faixa Caixa",
+      "Se o caixa estiver aberto clicar em Fechar caixa e confirmar",
+      "Clicar em Abrir caixa e informar valor de abertura 20",
+      "Confirmar que o status volta para Aberto e o valor de abertura é exibido"
+    ],
+    "expected": "O Dashboard permite fechar e abrir o caixa e mostra o estado e o valor de abertura atualizados."
+  },
+  {
+    "name": "Tempo de espera parte da confirmação do pedido",
+    "viewport": "desktop",
+    "covers": [
+      "tempo de espera",
+      "createdAt do pedido",
+      "API POST /api/orders",
+      "API PUT /api/orders/:id/status",
+      "Dashboard operacional"
+    ],
+    "description": "Valida que a contagem de espera começa quando o pedido é salvo e termina quando o preparo é iniciado.",
+    "steps": [
+      "Abrir uma mesa e salvar um novo pedido",
+      "Abrir o Dashboard e observar Tempo de espera e o pedido em andamento",
+      "Abrir Cozinha / KDS e iniciar o preparo do pedido",
+      "Voltar ao Dashboard"
+    ],
+    "expected": "A espera usa o momento de confirmação do pedido como início e deixa de acumular quando o pedido entra em Preparando."
+  },
+  {
+    "name": "Mesas possuem rolagem e alerta de garçom",
+    "viewport": "desktop",
+    "covers": [
+      "lista de mesas com rolagem própria",
       "botão Chamar garçom por mesa",
+      "mesa vermelha com alerta",
       "POST /api/customer/table/:code/request",
       "PUT /api/service-requests/:id/resolve"
     ],
-    "description": "Valida o fluxo crítico de atendimento: uma mesa chama o garçom, fica vermelha e o Dashboard contabiliza o alerta até a equipe atender.",
+    "description": "Valida a organização da tela Mesas e o fluxo de atendimento sem alterar a navegação existente.",
     "steps": [
-      "Abrir Mesas e clicar em Chamar garçom na Mesa 03",
-      "Confirmar que a Mesa 03 fica vermelha com Garçom solicitado",
-      "Abrir Dashboard e confirmar que Chamar garçom mostra pelo menos 1 alerta",
-      "No Dashboard clicar em Atender no alerta da Mesa 03",
-      "Voltar para Mesas"
+      "Abrir Mesas",
+      "Rolar a área de mesas sem sair da tela",
+      "Clicar em Chamar garçom em uma mesa livre",
+      "Confirmar que a mesa fica vermelha",
+      "Clicar em Atender"
     ],
-    "expected": "O chamado deixa de ficar pendente e a Mesa 03 não permanece vermelha após o atendimento."
+    "expected": "A grade de mesas rola dentro da área operacional e o alerta vermelho desaparece após o atendimento."
   },
   {
-    "name": "Dashboard mostra métricas operacionais dos pedidos",
-    "viewport": "desktop",
-    "covers": [
-      "quantidade de pedidos",
-      "quantidade de mesas ocupadas",
-      "tempo médio de atendimento",
-      "tempo médio de espera",
-      "pedidos em andamento",
-      "histórico operacional"
-    ],
-    "description": "Valida que o Dashboard apresenta as métricas solicitadas e uma visão operacional consolidada.",
-    "steps": [
-      "Abrir Dashboard",
-      "Confirmar os cartões Pedidos, Mesas ocupadas, Tempo atendimento e Tempo de espera",
-      "Confirmar a seção Pedidos em andamento",
-      "Confirmar a seção Histórico operacional"
-    ],
-    "expected": "O Dashboard exibe números e tempos operacionais, além de pedidos ativos e histórico recente."
-  },
-  {
-    "name": "Mudança de status alimenta tempos e histórico",
-    "viewport": "desktop",
-    "covers": [
-      "API POST /api/orders",
-      "API PUT /api/orders/:id/status",
-      "timestamps operacionais",
-      "KDS",
-      "Dashboard em tempo real"
-    ],
-    "description": "Valida o registro de tempo desde criação até preparo/pronto/entrega e sua disponibilidade para métricas.",
-    "steps": [
-      "Abrir uma mesa e criar um pedido com Smash Bacon",
-      "Abrir Cozinha / KDS e avançar o pedido de Novo para Preparando",
-      "Avançar o mesmo pedido para Pronto",
-      "Avançar o mesmo pedido para Entregue",
-      "Abrir Dashboard"
-    ],
-    "expected": "O histórico registra as mudanças e o Dashboard permanece funcional com métricas de tempo calculadas."
-  },
-  {
-    "name": "Modo Cliente continua enviando alerta para a operação",
+    "name": "Interfaces Estabelecimento e Cliente permanecem separadas",
     "viewport": "mobile",
     "covers": [
-      "Modo Cliente",
-      "atualização automática",
-      "chamada de garçom pelo cliente",
+      "Modo Estabelecimento acesso total",
+      "Modo Cliente acesso limitado",
       "responsividade mobile",
-      "alerta na mesa"
+      "GET /api/customer/table/:code"
     ],
-    "description": "Garante que o fluxo do cliente continua integrado à nova visão operacional e funciona em celular.",
+    "description": "Valida a separação visual e funcional entre a operação interna e o acesso do consumidor.",
     "steps": [
+      "Na interface administrativa confirmar a identificação Modo Estabelecimento",
       "Abrir o link do cliente da Mesa 01 em viewport mobile",
-      "Clicar em Chamar garçom",
-      "Retornar à interface administrativa",
-      "Abrir Mesas e localizar Mesa 01"
+      "Confirmar a identificação Modo Cliente acesso limitado",
+      "Verificar que o cliente vê mesa, pedido, notificações e atendimento"
     ],
-    "expected": "A Mesa 01 aparece em vermelho com o chamado de garçom pendente."
+    "expected": "A interface do cliente não apresenta menu administrativo, caixa, estoque, relatórios ou configurações, enquanto o estabelecimento mantém o painel completo."
   },
   {
-    "name": "Cadastro com foto e módulos existentes continuam preservados",
+    "name": "Módulos existentes continuam preservados",
     "viewport": "desktop",
     "covers": [
-      "Produtos",
-      "upload de foto",
-      "cardápio",
+      "PDV",
+      "Montar cardápio",
+      "Produtos com foto",
       "Histórico / Caixa",
-      "regressão dos módulos existentes"
+      "KDS",
+      "regressão da estrutura existente"
     ],
-    "description": "Verifica que a evolução do Dashboard não remove os recursos já implementados.",
+    "description": "Verifica que os ajustes de dashboard, caixa e mesas não removem os módulos já implementados.",
     "steps": [
-      "Abrir Produtos e confirmar que Novo produto continua disponível",
+      "Abrir Pedidos / PDV",
       "Abrir Montar cardápio",
+      "Abrir Produtos",
       "Abrir Histórico / Caixa",
-      "Abrir Mesas"
+      "Abrir Cozinha / KDS"
     ],
-    "expected": "Produtos, cardápio, caixa e mesas continuam acessíveis e funcionais após a atualização."
+    "expected": "Todos os módulos permanecem acessíveis e com a estrutura anterior preservada."
   }
 ]
