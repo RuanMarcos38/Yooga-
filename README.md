@@ -1,25 +1,34 @@
-# Yooga-
+# Mesa Restaurant OS
 
-## Prévia funcional do SaaS
+SaaS completo para operação de restaurantes, desenvolvido com frontend React/Vite e backend persistente.
 
-A versão navegável e funcional está publicada em:
+## Prévia online
 
 https://mesa-restaurant-os-a11fav.v2.appdeploy.ai/
 
-O código da prévia publicada está em `preview-appdeploy/` e inclui frontend React/Vite, backend persistente e testes de fluxo.
+## Layout
 
-### Módulos disponíveis
+Interface inspirada na referência enviada: sidebar clara, busca e filtros no topo, categorias, catálogo de produtos em cards e painel de pedido/pagamento à direita.
 
-- Dashboard
-- PDV com carrinho e criação de pedidos
+## Módulos
+
+- Dashboard e PDV
 - Mesas
 - Cozinha / KDS
 - Delivery
 - Produtos
-- Estoque
-- Financeiro
+- Estoque com movimentação
+- Financeiro com lançamentos
 - Clientes / CRM
 - Relatórios
-- Configurações
+- Configurações persistentes
 
-> Observação: a base enviada pelo Claude contém arquitetura, banco multi-tenant, autenticação e API NestJS, mas o próprio material marca frontend e os módulos operacionais como etapas ainda não implementadas. A pasta `preview-appdeploy/` foi adicionada sem sobrescrever essa base.
+## Backend
+
+Rotas implementadas para estado do sistema, pedidos, produtos, mesas, clientes, estoque, financeiro e configurações.
+
+## Estrutura
+
+- `src/` — frontend
+- `backend/` — API e persistência
+- `tests/` — testes de fluxo

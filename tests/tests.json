@@ -1,0 +1,43 @@
+[
+  {
+    "name": "Criar pedido pelo dashboard e enviar para cozinha",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": ["Dashboard de pedidos", "PDV", "API POST /api/orders", "KDS", "pagamento"],
+    "description": "Valida o fluxo principal do layout de pedidos, incluindo carrinho, pagamento e cozinha.",
+    "steps": ["No Dashboard, adicionar Smash Bacon ao pedido", "Selecionar Pix", "Finalizar pedido", "Abrir Cozinha / KDS"],
+    "expected": "Um novo pedido aparece na coluna Novo do KDS."
+  },
+  {
+    "name": "Cadastrar e excluir produto",
+    "viewport": "desktop",
+    "covers": ["Produtos", "API POST /api/products", "API DELETE /api/products/:id"],
+    "description": "Valida criação e remoção persistente de produto.",
+    "steps": ["Abrir Produtos", "Cadastrar Produto QA com preço 9.90", "Confirmar Produto QA na lista", "Excluir Produto QA"],
+    "expected": "Produto QA é criado e depois deixa de aparecer."
+  },
+  {
+    "name": "Operar mesa e movimentar estoque",
+    "viewport": "desktop",
+    "covers": ["Mesas", "API PUT /api/tables/:id/status", "Estoque", "API POST /api/stock/:id/adjust"],
+    "description": "Valida dois fluxos operacionais persistentes.",
+    "steps": ["Abrir Mesas e abrir uma mesa livre", "Liberar a mesma mesa", "Abrir Estoque", "Movimentar Pão brioche adicionando 5 unidades"],
+    "expected": "A mesa volta a Livre e o estoque de Pão brioche aumenta em 5 unidades."
+  },
+  {
+    "name": "Cadastrar cliente, lançamento financeiro e salvar configurações",
+    "viewport": "mobile",
+    "covers": ["Clientes / CRM", "API POST /api/customers", "Financeiro", "API POST /api/transactions", "Configurações", "API PUT /api/settings", "responsividade"],
+    "description": "Valida os fluxos administrativos principais em viewport móvel.",
+    "steps": ["Cadastrar Cliente QA com telefone (47) 99999-1234", "Criar uma entrada financeira QA de R$ 10,00", "Alterar a unidade para Unidade QA e salvar"],
+    "expected": "Cliente, lançamento financeiro e nova unidade ficam visíveis após as operações."
+  },
+  {
+    "name": "Bloquear finalização sem itens",
+    "viewport": "desktop",
+    "covers": ["validação do PDV", "guardrail de pedido vazio"],
+    "description": "Garante que pedido vazio não seja enviado.",
+    "steps": ["Abrir o Dashboard", "Remover todos os itens do pedido", "Observar o botão Finalizar pedido"],
+    "expected": "O botão Finalizar pedido fica desabilitado."
+  }
+]
