@@ -1,0 +1,75 @@
+[
+  {
+    "name": "Criar pedido no PDV e enviar para cozinha",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "PDV",
+      "criação persistente de pedido",
+      "API POST /api/orders",
+      "KDS"
+    ],
+    "description": "Valida o fluxo principal de venda.",
+    "steps": [
+      "Abrir PDV",
+      "Adicionar Smash Bacon ao carrinho",
+      "Finalizar pedido",
+      "Abrir Cozinha · KDS"
+    ],
+    "expected": "Um novo pedido aparece na coluna Novo do KDS."
+  },
+  {
+    "name": "Cadastrar e excluir produto",
+    "viewport": "desktop",
+    "covers": [
+      "catálogo de produtos",
+      "API POST /api/products",
+      "API DELETE /api/products/:id"
+    ],
+    "description": "Valida criação e remoção de produto.",
+    "steps": [
+      "Abrir Produtos",
+      "Cadastrar Produto QA com preço 9.90",
+      "Confirmar Produto QA na lista",
+      "Excluir Produto QA"
+    ],
+    "expected": "Produto QA é criado e depois deixa de aparecer."
+  },
+  {
+    "name": "Alterar situação de mesa",
+    "viewport": "desktop",
+    "covers": ["gestão de mesas", "API PUT /api/tables/:id/status"],
+    "description": "Valida abertura e liberação de mesa.",
+    "steps": [
+      "Abrir Mesas",
+      "Escolher uma mesa Livre",
+      "Clicar Abrir mesa",
+      "Clicar Liberar"
+    ],
+    "expected": "A mesa alterna de Livre para Ocupada e volta a Livre."
+  },
+  {
+    "name": "Cadastrar cliente no CRM",
+    "viewport": "mobile",
+    "covers": ["clientes e CRM", "API POST /api/customers", "responsividade"],
+    "description": "Valida cadastro de cliente em viewport móvel.",
+    "steps": [
+      "Abrir Clientes · CRM",
+      "Cadastrar Cliente QA com telefone (47) 99999-1234",
+      "Confirmar cadastro"
+    ],
+    "expected": "Cliente QA aparece na base de clientes."
+  },
+  {
+    "name": "Bloquear pedido vazio",
+    "viewport": "desktop",
+    "covers": ["validação do PDV", "guardrail de pedido vazio"],
+    "description": "Garante que uma venda sem itens não seja concluída.",
+    "steps": [
+      "Abrir PDV",
+      "Não adicionar produtos",
+      "Observar Finalizar pedido"
+    ],
+    "expected": "O botão Finalizar pedido permanece desabilitado."
+  }
+]
