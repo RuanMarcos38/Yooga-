@@ -1,52 +1,246 @@
-import { db, router, json, error } from '@appdeploy/sdk';
+import { db, storage, router, json, error } from '@appdeploy/sdk';
 
-type P = { id: string; name: string; category: string; price: number; stock: number; active: boolean };
-type T = { id: string; name: string; seats: number; status: 'Livre' | 'Ocupada' | 'Aguardando' | 'Fechamento'; total: number; waiter?: string };
+type P = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  stock: number;
+  active: boolean;
+  description?: string;
+  cost?: number;
+  code?: string;
+  featured?: boolean;
+  prepTime?: number;
+  channels?: string[];
+  addons?: string[];
+  ingredients?: string[];
+  imageUrl?: string;
+  imagePath?: string;
+};
+
+type MenuCategory = {
+  id: string;
+  name: string;
+  active: boolean;
+  order: number;
+  imageUrl?: string;
+  imagePath?: string;
+};
+
+type AppSettings = {
+  restaurantName: string;
+  unit: string;
+  serviceFee: number;
+  automaticServiceFee: boolean;
+  qrMenuEnabled: boolean;
+  selfServiceEnabled: boolean;
+  waiterAppEnabled: boolean;
+  autoAcceptDelivery: boolean;
+  lowStockAlerts: boolean;
+  prepAlerts: boolean;
+  loyaltyEnabled: boolean;
+  pixEnabled: boolean;
+  cardEnabled: boolean;
+  cashEnabled: boolean;
+  autoPrint: boolean;
+  kdsEnabled: boolean;
+  fiscalEnabled: boolean;
+  deliveryMinimum: number;
+  freeDeliveryFrom: number;
+  openingHours: string;
+};
+
+type T = {
+  id: string;
+  name: string;
+  seats: number;
+  status: 'Livre' | 'Ocupada' | 'Aguardando' | 'Fechamento';
+  total: number;
+  waiter?: string;
+};
 type I = { productId: string; name: string; qty: number; price: number };
-type O = { id: string; code: string; channel: string; table?: string; customer?: string; items: I[]; total: number; status: string; createdAt: string; paymentMethod?: string };
-type C = { id: string; name: string; phone: string; orders: number; totalSpent: number; lastOrder: string };
-type StockItem = { id: string; name: string; unit: string; current: number; minimum: number; cost: number };
-type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string };
-type S = { products: P[]; tables: T[]; orders: O[]; customers: C[]; stock: StockItem[]; transactions: Tx[]; settings: { restaurantName: string; unit: string } };
+type O = {
+  id: string;
+  code: string;
+  channel: string;
+  table?: string;
+  customer?: string;
+  items: I[];
+  total: number;
+  status: string;
+  createdAt: string;
+  paymentMethod?: string;
+};
+type C = {
+  id: string;
+  name: string;
+  phone: string;
+  orders: number;
+  totalSpent: number;
+  lastOrder: string;
+};
+type StockItem = {
+  id: string;
+  name: string;
+  unit: string;
+  current: number;
+  minimum: number;
+  cost: number;
+};
+type Tx = {
+  id: string;
+  description: string;
+  type: 'Entrada' | 'Saída';
+  amount: number;
+  date: string;
+  category: string;
+};
+type S = {
+  products: P[];
+  menuCategories: MenuCategory[];
+  tables: T[];
+  orders: O[];
+  customers: C[];
+  stock: StockItem[];
+  transactions: Tx[];
+  settings: AppSettings;
+};
+
+const defaultSettings = (): AppSettings => ({
+  restaurantName: 'Mesa Restaurante',
+  unit: 'Unidade Centro',
+  serviceFee: 10,
+  automaticServiceFee: true,
+  qrMenuEnabled: true,
+  selfServiceEnabled: false,
+  waiterAppEnabled: true,
+  autoAcceptDelivery: false,
+  lowStockAlerts: true,
+  prepAlerts: true,
+  loyaltyEnabled: true,
+  pixEnabled: true,
+  cardEnabled: true,
+  cashEnabled: true,
+  autoPrint: false,
+  kdsEnabled: true,
+  fiscalEnabled: false,
+  deliveryMinimum: 20,
+  freeDeliveryFrom: 80,
+  openingHours: '11:00 às 23:00',
+});
+
+const defaultCategories = (): MenuCategory[] => [
+  { id: 'cat1', name: 'Hambúrgueres', active: true, order: 1 },
+  { id: 'cat2', name: 'Porções', active: true, order: 2 },
+  { id: 'cat3', name: 'Bebidas', active: true, order: 3 },
+  { id: 'cat4', name: 'Sobremesas', active: true, order: 4 },
+  { id: 'cat5', name: 'Combos', active: true, order: 5 },
+];
 
 const seed = (): S => ({
-  settings: { restaurantName: 'Mesa Restaurante', unit: 'Unidade Centro' },
+  settings: defaultSettings(),
+  menuCategories: defaultCategories(),
   products: [
-    ['p1', 'Smash Bacon', 'Hambúrgueres', 34.9, 42],
-    ['p2', 'Cheese Salada', 'Hambúrgueres', 29.9, 38],
-    ['p3', 'Batata Crocante', 'Porções', 19.9, 54],
-    ['p4', 'Onion Rings', 'Porções', 22.9, 31],
-    ['p5', 'Coca-Cola Lata', 'Bebidas', 7, 96],
-    ['p6', 'Suco de Laranja', 'Bebidas', 12, 28],
-    ['p7', 'Brownie com Sorvete', 'Sobremesas', 18.9, 20],
-    ['p8', 'Combo Família', 'Combos', 89.9, 16],
-  ].map(value => ({ id: String(value[0]), name: String(value[1]), category: String(value[2]), price: Number(value[3]), stock: Number(value[4]), active: true })),
+    ['p1', 'Smash Bacon', 'Hambúrgueres', 34.9, 42, 12.2],
+    ['p2', 'Cheese Salada', 'Hambúrgueres', 29.9, 38, 10.8],
+    ['p3', 'Batata Crocante', 'Porções', 19.9, 54, 6.2],
+    ['p4', 'Onion Rings', 'Porções', 22.9, 31, 7.4],
+    ['p5', 'Coca-Cola Lata', 'Bebidas', 7, 96, 3.1],
+    ['p6', 'Suco de Laranja', 'Bebidas', 12, 28, 4.2],
+    ['p7', 'Brownie com Sorvete', 'Sobremesas', 18.9, 20, 6.5],
+    ['p8', 'Combo Família', 'Combos', 89.9, 16, 36.5],
+  ].map(value => ({
+    id: String(value[0]),
+    name: String(value[1]),
+    category: String(value[2]),
+    price: Number(value[3]),
+    stock: Number(value[4]),
+    cost: Number(value[5]),
+    active: true,
+    featured: String(value[0]) === 'p1' || String(value[0]) === 'p8',
+    prepTime: String(value[2]) === 'Bebidas' ? 3 : 15,
+    channels: ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
+    addons: [],
+    ingredients: [],
+  })),
   tables: Array.from({ length: 14 }, (_, index) => ({
     id: 't' + (index + 1),
     name: 'Mesa ' + String(index + 1).padStart(2, '0'),
     seats: index % 3 === 0 ? 6 : 4,
-    status: (index === 1 || index === 5 || index === 8 ? 'Ocupada' : index === 10 ? 'Aguardando' : 'Livre') as T['status'],
-    total: index === 1 ? 86.7 : index === 5 ? 129.4 : index === 8 ? 54.9 : 0,
-    waiter: index === 1 ? 'Marina' : index === 5 ? 'João' : index === 8 ? 'Carlos' : undefined,
+    status: (index === 0 ? 'Ocupada' : index === 1 || index === 4 ? 'Aguardando' : 'Livre') as T['status'],
+    total: index === 0 ? 86.7 : index === 1 ? 49.8 : index === 4 ? 129.4 : 0,
+    waiter: index === 0 ? 'Marina' : index === 1 ? 'João' : index === 4 ? 'Carlos' : undefined,
   })),
   orders: [
-    { id: 'o1', code: '#1048', channel: 'Mesa', table: 'Mesa 02', customer: 'Cliente balcão', items: [{ productId: 'p1', name: 'Smash Bacon', qty: 2, price: 34.9 }, { productId: 'p5', name: 'Coca-Cola Lata', qty: 2, price: 7 }], total: 83.8, status: 'Preparando', createdAt: new Date(Date.now() - 720000).toISOString(), paymentMethod: 'Cartão' },
-    { id: 'o2', code: '#1049', channel: 'Delivery', customer: 'Ana Paula', items: [{ productId: 'p8', name: 'Combo Família', qty: 1, price: 89.9 }], total: 89.9, status: 'Novo', createdAt: new Date(Date.now() - 420000).toISOString(), paymentMethod: 'Pix' },
-    { id: 'o3', code: '#1050', channel: 'Balcão', customer: 'Rafael', items: [{ productId: 'p2', name: 'Cheese Salada', qty: 1, price: 29.9 }, { productId: 'p3', name: 'Batata Crocante', qty: 1, price: 19.9 }], total: 49.8, status: 'Pronto', createdAt: new Date(Date.now() - 180000).toISOString(), paymentMethod: 'Dinheiro' },
+    {
+      id: 'o1',
+      code: '#1048',
+      channel: 'Mesa',
+      table: 'Mesa 01',
+      customer: 'Cliente balcão',
+      items: [
+        { productId: 'p1', name: 'Smash Bacon', qty: 2, price: 34.9 },
+        { productId: 'p5', name: 'Coca-Cola Lata', qty: 2, price: 7 },
+      ],
+      total: 83.8,
+      status: 'Preparando',
+      createdAt: new Date(Date.now() - 720000).toISOString(),
+      paymentMethod: 'Cartão',
+    },
+    {
+      id: 'o2',
+      code: '#1049',
+      channel: 'Delivery',
+      customer: 'Ana Paula',
+      items: [{ productId: 'p8', name: 'Combo Família', qty: 1, price: 89.9 }],
+      total: 89.9,
+      status: 'Novo',
+      createdAt: new Date(Date.now() - 420000).toISOString(),
+      paymentMethod: 'Pix',
+    },
+    {
+      id: 'o3',
+      code: '#1050',
+      channel: 'Balcão',
+      customer: 'Rafael',
+      items: [
+        { productId: 'p2', name: 'Cheese Salada', qty: 1, price: 29.9 },
+        { productId: 'p3', name: 'Batata Crocante', qty: 1, price: 19.9 },
+      ],
+      total: 49.8,
+      status: 'Pronto',
+      createdAt: new Date(Date.now() - 180000).toISOString(),
+      paymentMethod: 'Dinheiro',
+    },
   ],
   customers: [
     ['c1', 'Ana Paula', '(47) 99921-4401', 18, 1240.5, 'Hoje'],
     ['c2', 'Rafael Martins', '(47) 98820-7120', 11, 742.3, 'Hoje'],
     ['c3', 'Camila Souza', '(47) 99770-3191', 27, 1860.9, 'Ontem'],
     ['c4', 'Bruno Lima', '(47) 99118-2104', 7, 401.2, '18/09'],
-  ].map(value => ({ id: String(value[0]), name: String(value[1]), phone: String(value[2]), orders: Number(value[3]), totalSpent: Number(value[4]), lastOrder: String(value[5]) })),
+  ].map(value => ({
+    id: String(value[0]),
+    name: String(value[1]),
+    phone: String(value[2]),
+    orders: Number(value[3]),
+    totalSpent: Number(value[4]),
+    lastOrder: String(value[5]),
+  })),
   stock: [
     ['s1', 'Pão brioche', 'un', 82, 40, 2.1],
     ['s2', 'Carne bovina 160g', 'un', 38, 30, 8.4],
     ['s3', 'Bacon fatiado', 'kg', 4.2, 5, 31.8],
     ['s4', 'Batata congelada', 'kg', 12.5, 8, 14.2],
     ['s5', 'Coca-Cola lata', 'un', 96, 48, 3.85],
-  ].map(value => ({ id: String(value[0]), name: String(value[1]), unit: String(value[2]), current: Number(value[3]), minimum: Number(value[4]), cost: Number(value[5]) })),
+  ].map(value => ({
+    id: String(value[0]),
+    name: String(value[1]),
+    unit: String(value[2]),
+    current: Number(value[3]),
+    minimum: Number(value[4]),
+    cost: Number(value[5]),
+  })),
   transactions: [
     { id: 'f1', description: 'Vendas do dia', type: 'Entrada', amount: 2847.6, date: 'Hoje', category: 'Vendas' },
     { id: 'f2', description: 'Fornecedor de carnes', type: 'Saída', amount: 680, date: 'Hoje', category: 'Compras' },
@@ -55,11 +249,33 @@ const seed = (): S => ({
   ],
 });
 
+function normalizeState(raw: Partial<S>): S {
+  const base = seed();
+  return {
+    products: (raw.products || base.products).map(product => ({
+      active: true,
+      featured: false,
+      prepTime: 15,
+      channels: ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
+      addons: [],
+      ingredients: [],
+      ...product,
+    })),
+    menuCategories: raw.menuCategories?.length ? raw.menuCategories : base.menuCategories,
+    tables: raw.tables || base.tables,
+    orders: raw.orders || base.orders,
+    customers: raw.customers || base.customers,
+    stock: raw.stock || base.stock,
+    transactions: raw.transactions || base.transactions,
+    settings: { ...base.settings, ...(raw.settings || {}) },
+  };
+}
+
 async function get() {
   const result = await db.list<S>('mesa_state', { limit: 1 });
   if (result.items.length) {
     const { id, ...state } = result.items[0];
-    return { id, state: state as S };
+    return { id, state: normalizeState(state as Partial<S>) };
   }
   const state = seed();
   const [id] = await db.add('mesa_state', [state as unknown as Record<string, unknown>]);
@@ -72,54 +288,233 @@ async function save(id: string, state: S) {
   if (!ok) throw new Error('save');
 }
 
+async function withSignedImages(state: S): Promise<S> {
+  const productPaths = state.products.map(item => item.imagePath).filter((value): value is string => Boolean(value));
+  const categoryPaths = state.menuCategories.map(item => item.imagePath).filter((value): value is string => Boolean(value));
+  const paths = [...new Set([...productPaths, ...categoryPaths])];
+  if (!paths.length) return state;
+
+  const urls = await storage.url(paths);
+  const urlMap = new Map(urls.map(item => [item.path, item.url]));
+  return {
+    ...state,
+    products: state.products.map(item => item.imagePath ? { ...item, imageUrl: urlMap.get(item.imagePath) || item.imageUrl } : item),
+    menuCategories: state.menuCategories.map(item => item.imagePath ? { ...item, imageUrl: urlMap.get(item.imagePath) || item.imageUrl } : item),
+  };
+}
+
+function applyProduct(product: P, value: Partial<P>): P {
+  return {
+    ...product,
+    name: value.name?.trim() || product.name,
+    category: value.category || product.category,
+    price: value.price === undefined ? product.price : Number(value.price),
+    stock: value.stock === undefined ? product.stock : Number(value.stock),
+    active: value.active === undefined ? product.active : Boolean(value.active),
+    description: value.description ?? product.description,
+    cost: value.cost === undefined ? product.cost : Number(value.cost),
+    code: value.code ?? product.code,
+    featured: value.featured === undefined ? product.featured : Boolean(value.featured),
+    prepTime: value.prepTime === undefined ? product.prepTime : Number(value.prepTime),
+    channels: value.channels ?? product.channels,
+    addons: value.addons ?? product.addons,
+    ingredients: value.ingredients ?? product.ingredients,
+    imageUrl: value.imageUrl ?? product.imageUrl,
+  };
+}
+
 export const handler = router({
   'GET /api/_healthcheck': [async () => json({ message: 'Success' })],
-  'GET /api/state': [async () => json((await get()).state)],
-  'POST /api/reset': [async () => { const current = await get(); const state = seed(); await save(current.id, state); return json(state); }],
+  'GET /api/state': [async () => json(await withSignedImages((await get()).state))],
+
+  'POST /api/reset': [async () => {
+    const current = await get();
+    const state = seed();
+    await save(current.id, state);
+    return json(await withSignedImages(state));
+  }],
+
   'POST /api/products': [async ({ body }) => {
     const value = body as Partial<P>;
     if (!value.name?.trim() || Number(value.price) <= 0) return error('Nome e preço são obrigatórios', 400);
     const current = await get();
-    const product: P = { id: 'p' + Date.now(), name: value.name.trim(), category: value.category || 'Outros', price: Number(value.price), stock: Number(value.stock || 0), active: true };
+    const product: P = {
+      id: 'p' + Date.now(),
+      name: value.name.trim(),
+      category: value.category || 'Outros',
+      price: Number(value.price),
+      stock: Number(value.stock || 0),
+      active: value.active ?? true,
+      description: value.description || '',
+      cost: Number(value.cost || 0),
+      code: value.code || '',
+      featured: value.featured ?? false,
+      prepTime: Number(value.prepTime || 15),
+      channels: value.channels || ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
+      addons: value.addons || [],
+      ingredients: value.ingredients || [],
+      imageUrl: value.imageUrl || '',
+    };
     current.state.products.unshift(product);
     await save(current.id, current.state);
     return json(product, 201);
   }],
+
+  'PUT /api/products/:id': [async ({ params, body }) => {
+    const value = body as Partial<P>;
+    const current = await get();
+    const index = current.state.products.findIndex(product => product.id === params.id);
+    if (index < 0) return error('Produto não encontrado', 404);
+    const updated = applyProduct(current.state.products[index], value);
+    if (!updated.name.trim() || updated.price <= 0) return error('Nome e preço são obrigatórios', 400);
+    current.state.products[index] = updated;
+    await save(current.id, current.state);
+    return json(updated);
+  }],
+
+  'POST /api/products/:id/image': [async ({ params, body }) => {
+    const value = body as { content?: string; contentType?: string };
+    if (!value.content || !value.contentType?.startsWith('image/')) return error('Imagem inválida', 400);
+    const current = await get();
+    const product = current.state.products.find(item => item.id === params.id);
+    if (!product) return error('Produto não encontrado', 404);
+    const path = 'catalog/products/' + params.id + '-' + Date.now() + '.jpg';
+    const [ok] = await storage.write([{ path, content: value.content, contentType: value.contentType }]);
+    if (!ok) return error('Falha ao salvar imagem', 500);
+    if (product.imagePath) await storage.delete([product.imagePath]);
+    product.imagePath = path;
+    product.imageUrl = '';
+    await save(current.id, current.state);
+    const [{ url }] = await storage.url([path]);
+    return json({ ...product, imageUrl: url });
+  }],
+
   'DELETE /api/products/:id': [async ({ params }) => {
     const current = await get();
-    const before = current.state.products.length;
-    current.state.products = current.state.products.filter(product => product.id !== params.id);
-    if (current.state.products.length === before) return error('Produto não encontrado', 404);
+    const product = current.state.products.find(item => item.id === params.id);
+    if (!product) return error('Produto não encontrado', 404);
+    current.state.products = current.state.products.filter(item => item.id !== params.id);
+    if (product.imagePath) await storage.delete([product.imagePath]);
     await save(current.id, current.state);
     return json({ deleted: true });
   }],
+
+  'POST /api/menu/categories': [async ({ body }) => {
+    const value = body as Partial<MenuCategory>;
+    if (!value.name?.trim()) return error('Nome da categoria é obrigatório', 400);
+    const current = await get();
+    const category: MenuCategory = {
+      id: 'cat' + Date.now(),
+      name: value.name.trim(),
+      active: value.active ?? true,
+      order: Number(value.order || current.state.menuCategories.length + 1),
+      imageUrl: value.imageUrl || '',
+    };
+    current.state.menuCategories.push(category);
+    await save(current.id, current.state);
+    return json(category, 201);
+  }],
+
+  'PUT /api/menu/categories/:id': [async ({ params, body }) => {
+    const value = body as Partial<MenuCategory>;
+    const current = await get();
+    const category = current.state.menuCategories.find(item => item.id === params.id);
+    if (!category) return error('Categoria não encontrada', 404);
+    const oldName = category.name;
+    category.name = value.name?.trim() || category.name;
+    category.active = value.active === undefined ? category.active : Boolean(value.active);
+    category.order = value.order === undefined ? category.order : Number(value.order);
+    category.imageUrl = value.imageUrl ?? category.imageUrl;
+    if (oldName !== category.name) {
+      current.state.products = current.state.products.map(product => product.category === oldName ? { ...product, category: category.name } : product);
+    }
+    await save(current.id, current.state);
+    return json(category);
+  }],
+
+  'POST /api/menu/categories/:id/image': [async ({ params, body }) => {
+    const value = body as { content?: string; contentType?: string };
+    if (!value.content || !value.contentType?.startsWith('image/')) return error('Imagem inválida', 400);
+    const current = await get();
+    const category = current.state.menuCategories.find(item => item.id === params.id);
+    if (!category) return error('Categoria não encontrada', 404);
+    const path = 'catalog/categories/' + params.id + '-' + Date.now() + '.jpg';
+    const [ok] = await storage.write([{ path, content: value.content, contentType: value.contentType }]);
+    if (!ok) return error('Falha ao salvar imagem', 500);
+    if (category.imagePath) await storage.delete([category.imagePath]);
+    category.imagePath = path;
+    category.imageUrl = '';
+    await save(current.id, current.state);
+    const [{ url }] = await storage.url([path]);
+    return json({ ...category, imageUrl: url });
+  }],
+
+  'DELETE /api/menu/categories/:id': [async ({ params }) => {
+    const current = await get();
+    const category = current.state.menuCategories.find(item => item.id === params.id);
+    if (!category) return error('Categoria não encontrada', 404);
+    current.state.menuCategories = current.state.menuCategories.filter(item => item.id !== params.id);
+    current.state.products = current.state.products.map(product => product.category === category.name ? { ...product, category: 'Outros' } : product);
+    if (category.imagePath) await storage.delete([category.imagePath]);
+    await save(current.id, current.state);
+    return json({ deleted: true });
+  }],
+
   'PUT /api/tables/:id/status': [async ({ params, body }) => {
     const value = body as { status?: T['status'] };
     const current = await get();
     const table = current.state.tables.find(item => item.id === params.id);
     if (!table || !value.status) return error('Mesa/status inválido', 400);
     table.status = value.status;
-    if (value.status === 'Livre') { table.total = 0; table.waiter = undefined; }
+    if (value.status === 'Livre') {
+      table.total = 0;
+      table.waiter = undefined;
+    }
     if (value.status === 'Ocupada' && !table.waiter) table.waiter = 'Equipe';
     await save(current.id, current.state);
     return json(table);
   }],
+
   'POST /api/orders': [async ({ body }) => {
     const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: I[] };
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const current = await get();
-    const total = Number(value.items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
+    const subtotal = Number(value.items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
+    const fee = value.channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
+    const total = Number((subtotal + fee).toFixed(2));
     const sequence = 1051 + current.state.orders.filter(order => Number(order.code.slice(1)) >= 1051).length;
-    const order: O = { id: 'o' + Date.now(), code: '#' + sequence, channel: value.channel || 'Balcão', table: value.table, customer: value.customer || 'Cliente balcão', items: value.items, total, status: 'Novo', createdAt: new Date().toISOString(), paymentMethod: value.paymentMethod || 'Não informado' };
+    const order: O = {
+      id: 'o' + Date.now(),
+      code: '#' + sequence,
+      channel: value.channel || 'Balcão',
+      table: value.table,
+      customer: value.customer || 'Cliente balcão',
+      items: value.items,
+      total,
+      status: 'Novo',
+      createdAt: new Date().toISOString(),
+      paymentMethod: value.paymentMethod || 'Não informado',
+    };
     current.state.orders.unshift(order);
-    current.state.transactions.unshift({ id: 'f' + Date.now(), description: 'Venda ' + order.code, type: 'Entrada', amount: total, date: 'Hoje', category: 'Vendas' });
+    current.state.transactions.unshift({
+      id: 'f' + Date.now(),
+      description: 'Venda ' + order.code,
+      type: 'Entrada',
+      amount: total,
+      date: 'Hoje',
+      category: 'Vendas',
+    });
     if (value.table) {
       const table = current.state.tables.find(item => item.name === value.table);
-      if (table) { table.status = 'Ocupada'; table.total = Number((table.total + total).toFixed(2)); }
+      if (table) {
+        table.status = 'Ocupada';
+        table.total = Number((table.total + total).toFixed(2));
+      }
     }
     await save(current.id, current.state);
     return json(order, 201);
   }],
+
   'PUT /api/orders/:id/status': [async ({ params, body }) => {
     const value = body as { status?: string };
     const current = await get();
@@ -129,15 +524,24 @@ export const handler = router({
     await save(current.id, current.state);
     return json(order);
   }],
+
   'POST /api/customers': [async ({ body }) => {
     const value = body as Partial<C>;
     if (!value.name?.trim() || !value.phone?.trim()) return error('Nome e telefone obrigatórios', 400);
     const current = await get();
-    const customer: C = { id: 'c' + Date.now(), name: value.name.trim(), phone: value.phone.trim(), orders: 0, totalSpent: 0, lastOrder: 'Sem pedidos' };
+    const customer: C = {
+      id: 'c' + Date.now(),
+      name: value.name.trim(),
+      phone: value.phone.trim(),
+      orders: 0,
+      totalSpent: 0,
+      lastOrder: 'Sem pedidos',
+    };
     current.state.customers.unshift(customer);
     await save(current.id, current.state);
     return json(customer, 201);
   }],
+
   'POST /api/stock/:id/adjust': [async ({ params, body }) => {
     const value = body as { delta?: number };
     const delta = Number(value.delta);
@@ -151,20 +555,37 @@ export const handler = router({
     await save(current.id, current.state);
     return json(item);
   }],
+
   'POST /api/transactions': [async ({ body }) => {
     const value = body as Partial<Tx>;
-    if (!value.description?.trim() || !['Entrada', 'Saída'].includes(String(value.type)) || Number(value.amount) <= 0) return error('Lançamento financeiro inválido', 400);
+    if (!value.description?.trim() || !['Entrada', 'Saída'].includes(String(value.type)) || Number(value.amount) <= 0) {
+      return error('Lançamento financeiro inválido', 400);
+    }
     const current = await get();
-    const transaction: Tx = { id: 'f' + Date.now(), description: value.description.trim(), type: value.type as 'Entrada' | 'Saída', amount: Number(value.amount), date: 'Hoje', category: value.category || 'Outros' };
+    const transaction: Tx = {
+      id: 'f' + Date.now(),
+      description: value.description.trim(),
+      type: value.type as 'Entrada' | 'Saída',
+      amount: Number(value.amount),
+      date: 'Hoje',
+      category: value.category || 'Outros',
+    };
     current.state.transactions.unshift(transaction);
     await save(current.id, current.state);
     return json(transaction, 201);
   }],
+
   'PUT /api/settings': [async ({ body }) => {
-    const value = body as { restaurantName?: string; unit?: string };
-    if (!value.restaurantName?.trim() || !value.unit?.trim()) return error('Nome e unidade são obrigatórios', 400);
+    const value = body as Partial<AppSettings>;
+    if (value.restaurantName !== undefined && !value.restaurantName.trim()) return error('Nome é obrigatório', 400);
+    if (value.unit !== undefined && !value.unit.trim()) return error('Unidade é obrigatória', 400);
     const current = await get();
-    current.state.settings = { restaurantName: value.restaurantName.trim(), unit: value.unit.trim() };
+    current.state.settings = {
+      ...current.state.settings,
+      ...value,
+      restaurantName: value.restaurantName?.trim() || current.state.settings.restaurantName,
+      unit: value.unit?.trim() || current.state.settings.unit,
+    };
     await save(current.id, current.state);
     return json(current.state.settings);
   }],

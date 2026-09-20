@@ -18,12 +18,28 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 button {
   -webkit-tap-highlight-color: transparent;
+}
+
+.control {
+  width: 100%;
+  border: 1px solid #dedbd6;
+  border-radius: 0.75rem;
+  background: #fff;
+  padding: 0.75rem;
+  color: #323438;
+  outline: none;
+}
+
+.control:focus {
+  border-color: #e89a88;
+  box-shadow: 0 0 0 3px rgba(244, 95, 63, 0.08);
 }
 
 .natural-photo {

@@ -1,95 +1,101 @@
 [
   {
-    "name": "Abrir mesa e lançar produtos do cardápio",
+    "name": "Abrir uma mesa, lançar produto e salvar pedido",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "Mesas",
-      "abertura do cardápio pela mesa",
-      "seleção automática do canal Mesa",
-      "PDV",
+      "tela de mesas no formato operacional",
+      "abertura do PDV pela mesa",
+      "cardápio por categorias",
       "API POST /api/orders",
+      "taxa de serviço",
       "KDS"
     ],
-    "description": "Valida o novo fluxo principal em que clicar em uma mesa abre o cardápio cadastrado já vinculado àquela mesa e permite enviar o pedido para a cozinha.",
+    "description": "Valida o fluxo principal inspirado no atendimento presencial: a mesa abre o cardápio, recebe itens e envia o pedido para a cozinha.",
     "steps": [
       "Abrir Mesas",
-      "Clicar no card da Mesa 01 ou em Abrir cardápio",
-      "Confirmar que o PDV mostra Mesa 01 · Cardápio e o canal Mesa está selecionado",
-      "Adicionar Smash Bacon ao pedido e finalizar",
+      "Clicar na Mesa 01",
+      "No cardápio da mesa clicar em Smash Bacon",
+      "Salvar o pedido",
       "Abrir Cozinha / KDS"
     ],
-    "expected": "O cardápio cadastrado é aberto para a Mesa 01 e o pedido finalizado aparece como novo pedido no KDS vinculado ao canal Mesa."
+    "expected": "O pedido da Mesa 01 é salvo com o produto e aparece como novo pedido no KDS."
   },
   {
-    "name": "Cadastrar e excluir produto",
+    "name": "Criar categoria e produto completo no construtor de cardápio",
     "viewport": "desktop",
     "covers": [
-      "Produtos",
+      "Montar cardápio",
+      "API POST /api/menu/categories",
       "API POST /api/products",
-      "API DELETE /api/products/:id"
+      "canais de venda",
+      "custo e margem",
+      "complementos",
+      "ficha técnica"
     ],
-    "description": "Valida criação e remoção persistente de produto.",
+    "description": "Valida que o gestor consegue montar o cardápio sem sair do sistema.",
     "steps": [
-      "Abrir Produtos",
-      "Cadastrar Produto QA com preço 9.90",
-      "Confirmar Produto QA na lista",
-      "Excluir Produto QA"
+      "Abrir Montar cardápio e criar a categoria Teste QA com ordem 8",
+      "Criar o produto Produto QA nessa categoria com preço 20, custo 8, estoque 10 e canal Mesa ativo",
+      "Informar complemento Bacon e insumo Carne 100g",
+      "Salvar o produto"
     ],
-    "expected": "Produto QA é criado e depois deixa de aparecer."
+    "expected": "A categoria Teste QA e o Produto QA aparecem no construtor, com preço e margem calculada."
   },
   {
-    "name": "Alterar situação da mesa e movimentar estoque",
+    "name": "Editar produto, duplicar e excluir a cópia",
     "viewport": "desktop",
     "covers": [
-      "API PUT /api/tables/:id/status",
-      "Estoque",
-      "API POST /api/stock/:id/adjust"
+      "API PUT /api/products/:id",
+      "duplicação de produto",
+      "API DELETE /api/products/:id",
+      "gestão de cardápio"
     ],
-    "description": "Valida que o novo clique para abrir o cardápio não interfere nos controles de ocupação/liberação da mesa nem no estoque.",
+    "description": "Valida manutenção completa dos produtos cadastrados.",
     "steps": [
-      "Abrir Mesas",
-      "Na Mesa 01 clicar em Alterar para ocupada sem abrir o cardápio",
-      "Na mesma mesa clicar em Liberar mesa",
-      "Abrir Estoque",
-      "Movimentar Pão brioche adicionando 5 unidades"
+      "Abrir Montar cardápio",
+      "Editar Smash Bacon alterando o tempo de preparo para 18 minutos e salvar",
+      "Duplicar Smash Bacon",
+      "Excluir a cópia criada"
     ],
-    "expected": "A Mesa 01 volta ao status Livre e o estoque de Pão brioche aumenta em 5 unidades."
+    "expected": "Smash Bacon permanece com a alteração salva e a cópia deixa de aparecer após a exclusão."
   },
   {
-    "name": "Cadastrar cliente, lançamento financeiro e salvar configurações",
+    "name": "Salvar configuração operacional em mobile",
     "viewport": "mobile",
     "covers": [
-      "Clientes / CRM",
-      "API POST /api/customers",
-      "Financeiro",
-      "API POST /api/transactions",
       "Configurações",
       "API PUT /api/settings",
+      "taxa de serviço",
+      "QR Code",
+      "totem",
+      "pagamentos",
       "responsividade"
     ],
-    "description": "Valida os fluxos administrativos principais em viewport móvel.",
+    "description": "Valida as novas opções de configuração sem prejudicar a experiência móvel.",
     "steps": [
-      "Cadastrar Cliente QA com telefone (47) 99999-1234",
-      "Criar uma entrada financeira QA de R$ 10,00",
-      "Alterar a unidade para Unidade QA e salvar"
+      "Abrir Configurações",
+      "Alterar a taxa de serviço para 12",
+      "Ativar Totem de autoatendimento",
+      "Manter Pix ativo",
+      "Salvar configuração geral"
     ],
-    "expected": "Cliente, lançamento financeiro e nova unidade ficam visíveis após as operações."
+    "expected": "As configurações ficam salvas e continuam visíveis ao retornar à tela."
   },
   {
-    "name": "Bloquear finalização sem itens",
+    "name": "Bloquear pedido vazio na mesa",
     "viewport": "desktop",
     "covers": [
-      "validação do PDV",
-      "guardrail de pedido vazio"
+      "guardrail de pedido vazio",
+      "PDV de mesa"
     ],
-    "description": "Garante que pedido vazio não seja enviado.",
+    "description": "Garante que uma mesa não consiga salvar um pedido sem itens.",
     "steps": [
       "Abrir Mesas",
-      "Clicar em Mesa 02 para abrir seu cardápio",
-      "Não adicionar produtos",
-      "Observar o botão Finalizar pedido"
+      "Clicar em uma mesa livre",
+      "Não adicionar nenhum produto",
+      "Observar o botão Salvar"
     ],
-    "expected": "O botão Finalizar pedido fica desabilitado enquanto a mesa não tiver itens no pedido."
+    "expected": "O botão Salvar permanece desabilitado enquanto o pedido da mesa estiver vazio."
   }
 ]

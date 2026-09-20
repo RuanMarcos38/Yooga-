@@ -32,9 +32,71 @@ import {
   Clock3,
   Star,
   ArrowUpRight,
+  Grid3X3,
+  ImagePlus,
+  Layers3,
+  Copy,
+  Smartphone,
+  Printer,
+  Plug,
+  ReceiptText,
+  Percent,
+  Truck,
+  ShieldCheck,
+  BrainCircuit,
+  Headphones,
+  History,
+  Store,
 } from 'lucide-react';
 
-type Product = { id: string; name: string; category: string; price: number; stock: number; active: boolean };
+type Product = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  stock: number;
+  active: boolean;
+  description?: string;
+  cost?: number;
+  code?: string;
+  featured?: boolean;
+  prepTime?: number;
+  channels?: string[];
+  addons?: string[];
+  ingredients?: string[];
+  imageUrl?: string;
+  imagePath?: string;
+};
+type MenuCategory = {
+  id: string;
+  name: string;
+  active: boolean;
+  order: number;
+  imageUrl?: string;
+  imagePath?: string;
+};
+type AppSettings = {
+  restaurantName: string;
+  unit: string;
+  serviceFee: number;
+  automaticServiceFee: boolean;
+  qrMenuEnabled: boolean;
+  selfServiceEnabled: boolean;
+  waiterAppEnabled: boolean;
+  autoAcceptDelivery: boolean;
+  lowStockAlerts: boolean;
+  prepAlerts: boolean;
+  loyaltyEnabled: boolean;
+  pixEnabled: boolean;
+  cardEnabled: boolean;
+  cashEnabled: boolean;
+  autoPrint: boolean;
+  kdsEnabled: boolean;
+  fiscalEnabled: boolean;
+  deliveryMinimum: number;
+  freeDeliveryFrom: number;
+  openingHours: string;
+};
 type Table = { id: string; name: string; seats: number; status: 'Livre' | 'Ocupada' | 'Aguardando' | 'Fechamento'; total: number; waiter?: string };
 type Item = { productId: string; name: string; qty: number; price: number };
 type Order = { id: string; code: string; channel: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; paymentMethod?: string };
@@ -43,14 +105,15 @@ type Stock = { id: string; name: string; unit: string; current: number; minimum:
 type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string };
 type State = {
   products: Product[];
+  menuCategories: MenuCategory[];
   tables: Table[];
   orders: Order[];
   customers: Customer[];
   stock: Stock[];
   transactions: Tx[];
-  settings: { restaurantName: string; unit: string };
+  settings: AppSettings;
 };
-type Page = 'dashboard' | 'pdv' | 'tables' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
+type Page = 'dashboard' | 'pdv' | 'tables' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
 
 const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ACCENT = '#f45f3f';
@@ -59,6 +122,7 @@ const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['dashboard', 'Dashboard', LayoutDashboard],
   ['pdv', 'Pedidos / PDV', ShoppingBag],
   ['tables', 'Mesas', Utensils],
+  ['menu', 'Montar cardápio', Grid3X3],
   ['kds', 'Cozinha / KDS', ChefHat],
   ['delivery', 'Delivery', Bike],
   ['products', 'Produtos', Package],
@@ -69,14 +133,38 @@ const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['settings', 'Configurações', Settings],
 ];
 
+const defaultSettings: AppSettings = {
+  restaurantName: 'Mesa Restaurante',
+  unit: 'Unidade Centro',
+  serviceFee: 10,
+  automaticServiceFee: true,
+  qrMenuEnabled: true,
+  selfServiceEnabled: false,
+  waiterAppEnabled: true,
+  autoAcceptDelivery: false,
+  lowStockAlerts: true,
+  prepAlerts: true,
+  loyaltyEnabled: true,
+  pixEnabled: true,
+  cardEnabled: true,
+  cashEnabled: true,
+  autoPrint: false,
+  kdsEnabled: true,
+  fiscalEnabled: false,
+  deliveryMinimum: 20,
+  freeDeliveryFrom: 80,
+  openingHours: '11:00 às 23:00',
+};
+
 const empty: State = {
   products: [],
+  menuCategories: [],
   tables: [],
   orders: [],
   customers: [],
   stock: [],
   transactions: [],
-  settings: { restaurantName: 'Mesa Restaurante', unit: 'Unidade Centro' },
+  settings: defaultSettings,
 };
 
 const PHOTO_BY_PRODUCT: Record<string, string> = {
@@ -91,6 +179,7 @@ const PHOTO_BY_PRODUCT: Record<string, string> = {
 };
 
 const productPhoto = (product: Product) => {
+  if (product.imageUrl) return product.imageUrl;
   if (PHOTO_BY_PRODUCT[product.id]) return PHOTO_BY_PRODUCT[product.id];
   const value = (product.category + ' ' + product.name).toLowerCase();
   if (value.includes('bebida') || value.includes('coca') || value.includes('suco')) return PHOTO_BY_PRODUCT.p5;
@@ -132,7 +221,7 @@ export default function MesaApp() {
   const [tab, setTab] = useState<'Popular' | 'Recentes'>('Popular');
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [settingsForm, setSettingsForm] = useState(empty.settings);
+  const [settingsForm, setSettingsForm] = useState<AppSettings>(defaultSettings);
   const seededCart = useRef(false);
 
   const load = async () => {
@@ -228,7 +317,11 @@ export default function MesaApp() {
     setTable('');
   };
 
-  const categories = ['Todos', ...Array.from(new Set(data.products.map(product => product.category)))];
+  const managedCategories = data.menuCategories
+    .filter(item => item.active)
+    .sort((a, b) => a.order - b.order)
+    .map(item => item.name);
+  const categories = ['Todos', ...Array.from(new Set([...managedCategories, ...data.products.map(product => product.category)]))];
   const visibleProducts = data.products
     .filter(product => category === 'Todos' || product.category === category)
     .filter(product => !search || product.name.toLowerCase().includes(search.toLowerCase()))
@@ -375,8 +468,8 @@ type ViewProps = {
   finishOrder: () => Promise<void>;
   run: (fn: () => Promise<unknown>, message: string) => Promise<void>;
   search: string;
-  settingsForm: { restaurantName: string; unit: string };
-  setSettingsForm: (value: { restaurantName: string; unit: string }) => void;
+  settingsForm: AppSettings;
+  setSettingsForm: (value: AppSettings) => void;
   setPage: (page: Page) => void;
   openTableOrder: (tableName: string) => void;
 };
@@ -384,6 +477,7 @@ type ViewProps = {
 function PageView(props: ViewProps) {
   if (props.page === 'dashboard' || props.page === 'pdv') return <OrderingWorkspace {...props} />;
   if (props.page === 'tables') return <TablesView {...props} />;
+  if (props.page === 'menu') return <MenuBuilderView {...props} />;
   if (props.page === 'kds') return <KdsView {...props} />;
   if (props.page === 'delivery') return <DeliveryView {...props} />;
   if (props.page === 'products') return <ProductsView {...props} />;
@@ -395,6 +489,7 @@ function PageView(props: ViewProps) {
 }
 
 function OrderingWorkspace(props: ViewProps) {
+  if (props.channel === 'Mesa' && props.table) return <TableOrderWorkspace {...props} />;
   return (
     <div className="grid gap-5 2xl:grid-cols-[1fr_300px]">
       <section className="min-w-0">
@@ -526,48 +621,447 @@ function InvoicePanel(props: ViewProps) {
   );
 }
 
+function TableOrderWorkspace(props: ViewProps) {
+  const fee = props.data.settings.automaticServiceFee ? props.subtotal * (props.data.settings.serviceFee / 100) : 0;
+  const total = props.subtotal + fee;
+  const categoryImage = (name: string) => props.data.menuCategories.find(item => item.name === name)?.imageUrl || categoryPhoto(name);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <button onClick={() => props.setPage('tables')} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#555d62] hover:bg-white">VOLTAR</button>
+        <label className="flex h-11 min-w-0 flex-1 items-center rounded-xl border border-[#cfd4d7] bg-white px-4">
+          <input value={props.search} readOnly placeholder="Buscar" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          <Search size={18} className="text-[#50585c]" />
+        </label>
+        <button onClick={() => props.setPage('reports')} className="grid h-11 w-11 place-items-center rounded-full text-[#535c60] hover:bg-white"><History size={20} /></button>
+      </div>
+
+      <div className="grid min-h-[620px] gap-4 xl:grid-cols-[330px_1fr]">
+        <aside className="flex flex-col rounded-xl border border-[#e5e7e8] bg-white">
+          <div className="border-b px-5 py-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">{props.table.toUpperCase()}</h2>
+              <span className="text-xs text-slate-400">✎</span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto p-4">
+            {props.cart.length === 0 ? <div className="grid h-full min-h-[220px] place-items-center text-center text-xs text-slate-400">Nenhum item lançado nesta mesa.<br />Clique nos produtos ao lado.</div> : props.cart.map(item => (
+              <div key={item.productId} className="mb-2 flex items-center gap-3 rounded-lg border border-[#eef0f1] p-2">
+                <div className="h-10 w-10 overflow-hidden rounded-md bg-[#eeeae4]"><img src={productPhoto(props.data.products.find(product => product.id === item.productId) || { id: item.productId, name: item.name, category: '', price: item.price, stock: 0, active: true })} alt={item.name} className="h-full w-full object-cover natural-photo" /></div>
+                <div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{item.name}</b><small className="text-[10px] text-slate-400">{BRL(item.price)}</small></div>
+                <button onClick={() => props.changeQty(item.productId, -1)} className="grid h-7 w-7 place-items-center rounded border"><Minus size={12} /></button>
+                <b className="text-xs">{item.qty}</b>
+                <button onClick={() => props.changeQty(item.productId, 1)} className="grid h-7 w-7 place-items-center rounded border"><Plus size={12} /></button>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t p-4">
+            <div className="flex justify-between py-1 text-sm"><b>Subtotal</b><b>{BRL(props.subtotal)}</b></div>
+            <div className="flex justify-between py-1 text-xs text-emerald-500"><b>Acréscimo automático</b><b>{props.data.settings.automaticServiceFee ? props.data.settings.serviceFee + ' %' : 'Desativado'}</b></div>
+            <div className="mt-2 flex justify-between py-1 text-xl"><b>Total</b><b>{BRL(total)}</b></div>
+            <div className="flex justify-between py-1 text-sm"><b>Restante</b><b>{BRL(total)}</b></div>
+
+            <div className="mt-4 grid grid-cols-5 gap-2">
+              <QuickIcon icon={<Trash2 size={16} />} />
+              <QuickIcon icon={<Percent size={16} />} />
+              <QuickIcon icon={<WalletCards size={16} />} />
+              <QuickIcon icon={<ReceiptText size={16} />} />
+              <QuickIcon icon={<Printer size={16} />} />
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              {props.data.settings.pixEnabled && <button onClick={() => props.setPayment('Pix')} className={'rounded-lg border py-2 text-[9px] font-semibold ' + (props.payment === 'Pix' ? 'border-[#1da878] bg-[#effcf7] text-[#13865f]' : '')}>Pix</button>}
+              {props.data.settings.cardEnabled && <button onClick={() => props.setPayment('Cartão')} className={'rounded-lg border py-2 text-[9px] font-semibold ' + (props.payment === 'Cartão' ? 'border-[#1da878] bg-[#effcf7] text-[#13865f]' : '')}>Cartão</button>}
+              {props.data.settings.cashEnabled && <button onClick={() => props.setPayment('Dinheiro')} className={'rounded-lg border py-2 text-[9px] font-semibold ' + (props.payment === 'Dinheiro' ? 'border-[#1da878] bg-[#effcf7] text-[#13865f]' : '')}>Dinheiro</button>}
+            </div>
+
+            <button className="mt-3 w-full rounded-xl bg-[#7dc8ef] py-4 text-sm font-semibold text-[#175071]">+ Adicionar Pagamento</button>
+          </div>
+        </aside>
+
+        <section className="flex min-w-0 flex-col rounded-xl border border-[#e5e7e8] bg-white p-4">
+          <div className="flex gap-2 overflow-x-auto pb-3">
+            {props.categories.filter(name => name !== 'Todos').map(name => (
+              <button key={name} onClick={() => props.setCategory(name)} className="min-w-[90px] text-center">
+                <span className={'mx-auto block h-16 w-16 overflow-hidden rounded-full border-2 bg-[#f1f2f3] ' + (props.category === name ? 'border-[#f45f3f]' : 'border-[#d3d6d8]')}>
+                  <img src={categoryImage(name)} alt={name} className="h-full w-full object-cover natural-photo" />
+                </span>
+                <span className="mt-2 block truncate text-[10px] text-[#4f565a]">{name}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="h-2 rounded-full bg-[#d7d9da]" />
+
+          <div className="mt-4 grid flex-1 auto-rows-max gap-3 overflow-auto sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {props.products.filter(product => product.active && (!product.channels?.length || product.channels.includes('Mesa'))).map(product => (
+              <button key={product.id} onClick={() => props.addProduct(product)} className="overflow-hidden rounded-xl border border-[#edf0f1] bg-white text-left shadow-[0_4px_12px_rgba(32,35,38,0.06)] transition hover:-translate-y-0.5 hover:shadow-md">
+                <div className="relative h-32 bg-[#f4f4f3]"><img src={productPhoto(product)} alt={product.name} className="h-full w-full object-cover natural-photo" />{product.stock <= 5 && <span className="absolute right-2 top-2 rounded-full bg-[#a8a8a8] px-2 py-1 text-[9px] font-bold text-white">!</span>}</div>
+                <div className="p-3">
+                  <b className="block min-h-8 text-xs">{product.name}</b>
+                  <div className="mt-2 border-t pt-2 text-xs">{BRL(product.price)}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <button disabled={!props.cart.length} onClick={() => void props.finishOrder()} className="mt-4 w-full rounded-xl bg-[#7dc8ef] py-4 text-sm font-semibold text-[#175071] disabled:opacity-40">Salvar</button>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function MenuBuilderView(props: ViewProps) {
+  const [productOpen, setProductOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
+  const categories = [...props.data.menuCategories].sort((a, b) => a.order - b.order);
+  const lowStock = props.data.products.filter(product => product.stock <= 5).length;
+  const lowMargin = props.data.products.filter(product => product.cost && product.price > 0 && ((product.price - product.cost) / product.price) * 100 < 35).length;
+
+  const duplicate = async (product: Product) => {
+    await props.run(() => api.post('/api/products', {
+      name: product.name + ' (cópia)',
+      category: product.category,
+      price: product.price,
+      stock: product.stock,
+      description: product.description,
+      cost: product.cost,
+      code: product.code ? product.code + '-C' : '',
+      featured: false,
+      prepTime: product.prepTime,
+      channels: product.channels,
+      addons: product.addons,
+      ingredients: product.ingredients,
+      imageUrl: product.imageUrl,
+    }), 'Produto duplicado.');
+  };
+
+  return (
+    <PageSection title="Montar cardápio" subtitle="Categorias, produtos, fotos, canais, complementos e ficha técnica">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Produtos cadastrados" value={String(props.data.products.length)} />
+        <Metric label="Categorias" value={String(categories.length)} />
+        <Metric label="Estoque crítico" value={String(lowStock)} />
+        <Metric label="Margem abaixo de 35%" value={String(lowMargin)} />
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button onClick={() => { setEditingProduct(null); setProductOpen(true); }} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Novo produto</button>
+        <button onClick={() => { setEditingCategory(null); setCategoryOpen(true); }} className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><Layers3 size={15} />Nova categoria</button>
+        <button className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><QrCode size={15} />Pré-visualizar QR</button>
+        <button className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><BrainCircuit size={15} />Smart Ops: sugerir margem</button>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[250px_1fr]">
+        <Surface>
+          <SectionHead title="Categorias" subtitle="Ordem e imagem do cardápio" />
+          <div className="space-y-2">
+            {categories.map(category => (
+              <button key={category.id} onClick={() => { setEditingCategory(category); setCategoryOpen(true); }} className="flex w-full items-center gap-3 rounded-lg border border-[#eeece8] p-2 text-left hover:border-[#e3b4a8]">
+                <span className="h-10 w-10 overflow-hidden rounded-lg bg-[#efede9]"><img src={category.imageUrl || categoryPhoto(category.name)} alt={category.name} className="h-full w-full object-cover natural-photo" /></span>
+                <span className="min-w-0 flex-1"><b className="block truncate text-xs">{category.name}</b><small className="text-[9px] text-slate-400">Ordem {category.order}</small></span>
+                <span className={'h-2.5 w-2.5 rounded-full ' + (category.active ? 'bg-emerald-500' : 'bg-slate-300')} />
+              </button>
+            ))}
+          </div>
+        </Surface>
+
+        <Surface>
+          <div className="mb-4 flex items-end justify-between gap-3"><SectionHead title="Produtos do cardápio" subtitle="Clique em um produto para editar" /><span className="text-[10px] text-slate-400">Fotos próprias, custo, margem e canais</span></div>
+          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+            {props.data.products.map(product => {
+              const margin = product.cost && product.price > 0 ? ((product.price - product.cost) / product.price) * 100 : null;
+              return (
+                <article key={product.id} className="overflow-hidden rounded-xl border border-[#ebe7e2] bg-[#fffefa]">
+                  <button onClick={() => { setEditingProduct(product); setProductOpen(true); }} className="block w-full text-left">
+                    <div className="relative h-36 bg-[#f1efeb]"><img src={productPhoto(product)} alt={product.name} className="h-full w-full object-cover natural-photo" />{product.featured && <span className="absolute left-2 top-2 rounded-full bg-[#f45f3f] px-2 py-1 text-[9px] font-bold text-white">Destaque</span>}{!product.active && <span className="absolute inset-0 grid place-items-center bg-black/40 text-xs font-bold text-white">Inativo</span>}</div>
+                    <div className="p-3"><small className="text-[9px] uppercase text-slate-400">{product.category}</small><b className="mt-1 block text-sm">{product.name}</b><div className="mt-2 flex items-center justify-between"><strong className="text-[#ef5a38]">{BRL(product.price)}</strong><span className={'text-[9px] ' + (margin !== null && margin < 35 ? 'text-amber-600' : 'text-emerald-600')}>{margin === null ? 'Custo não informado' : 'Margem ' + margin.toFixed(0) + '%'}</span></div></div>
+                  </button>
+                  <div className="grid grid-cols-3 border-t">
+                    <button onClick={() => { setEditingProduct(product); setProductOpen(true); }} className="py-2 text-[9px] font-semibold">Editar</button>
+                    <button onClick={() => void duplicate(product)} className="flex items-center justify-center gap-1 border-x py-2 text-[9px] font-semibold"><Copy size={11} />Copiar</button>
+                    <button onClick={() => { if (confirm('Excluir ' + product.name + '?')) void props.run(() => api.delete('/api/products/' + product.id), 'Produto excluído.'); }} className="py-2 text-[9px] font-semibold text-red-500">Excluir</button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </Surface>
+      </div>
+
+      {productOpen && <ProductEditor product={editingProduct} categories={categories} run={props.run} onClose={() => setProductOpen(false)} />}
+      {categoryOpen && <CategoryEditor category={editingCategory} run={props.run} onClose={() => setCategoryOpen(false)} />}
+    </PageSection>
+  );
+}
+
+function ProductEditor({ product, categories, run, onClose }: { product: Product | null; categories: MenuCategory[]; run: ViewProps['run']; onClose: () => void }) {
+  const [form, setForm] = useState({
+    name: product?.name || '',
+    category: product?.category || categories[0]?.name || 'Outros',
+    price: product?.price || 0,
+    cost: product?.cost || 0,
+    stock: product?.stock || 0,
+    code: product?.code || '',
+    description: product?.description || '',
+    prepTime: product?.prepTime || 15,
+    featured: product?.featured || false,
+    active: product?.active ?? true,
+    channels: product?.channels?.length ? product.channels : ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
+    addonsText: product?.addons?.join(', ') || '',
+    ingredientsText: product?.ingredients?.join(', ') || '',
+    imageUrl: product?.imageUrl || '',
+  });
+  const [file, setFile] = useState<File | null>(null);
+
+  const toggleChannel = (channel: string) => {
+    setForm(current => ({ ...current, channels: current.channels.includes(channel) ? current.channels.filter(item => item !== channel) : [...current.channels, channel] }));
+  };
+
+  const save = async () => {
+    if (!form.name.trim() || form.price <= 0) return;
+    await run(async () => {
+      const payload = {
+        name: form.name.trim(),
+        category: form.category,
+        price: Number(form.price),
+        cost: Number(form.cost),
+        stock: Number(form.stock),
+        code: form.code,
+        description: form.description,
+        prepTime: Number(form.prepTime),
+        featured: form.featured,
+        active: form.active,
+        channels: form.channels,
+        addons: form.addonsText.split(',').map(item => item.trim()).filter(Boolean),
+        ingredients: form.ingredientsText.split(',').map(item => item.trim()).filter(Boolean),
+        imageUrl: form.imageUrl,
+      };
+      let id = product?.id;
+      if (id) {
+        await api.put('/api/products/' + id, payload);
+      } else {
+        const created = await api.post('/api/products', payload);
+        id = created.data.id;
+      }
+      if (file && id) {
+        const image = await compressImage(file);
+        await api.post('/api/products/' + id + '/image', image);
+      }
+    }, product ? 'Produto atualizado.' : 'Produto cadastrado.');
+    onClose();
+  };
+
+  return (
+    <Modal title={product ? 'Editar produto' : 'Novo produto'} onClose={onClose}>
+      <div className="grid max-h-[70vh] gap-3 overflow-auto pr-1 sm:grid-cols-2">
+        <Field label="Nome do produto"><input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} className="control" /></Field>
+        <Field label="Categoria"><select value={form.category} onChange={event => setForm({ ...form, category: event.target.value })} className="control">{categories.map(category => <option key={category.id}>{category.name}</option>)}<option>Outros</option></select></Field>
+        <Field label="Preço de venda"><input type="number" step="0.01" value={form.price} onChange={event => setForm({ ...form, price: Number(event.target.value) })} className="control" /></Field>
+        <Field label="Custo"><input type="number" step="0.01" value={form.cost} onChange={event => setForm({ ...form, cost: Number(event.target.value) })} className="control" /></Field>
+        <Field label="Estoque"><input type="number" value={form.stock} onChange={event => setForm({ ...form, stock: Number(event.target.value) })} className="control" /></Field>
+        <Field label="Código PDV / SKU"><input value={form.code} onChange={event => setForm({ ...form, code: event.target.value })} className="control" /></Field>
+        <Field label="Tempo de preparo (min)"><input type="number" value={form.prepTime} onChange={event => setForm({ ...form, prepTime: Number(event.target.value) })} className="control" /></Field>
+        <Field label="Imagem por URL"><input value={form.imageUrl} onChange={event => setForm({ ...form, imageUrl: event.target.value })} placeholder="https://..." className="control" /></Field>
+        <Field label="Descrição"><textarea value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} className="control min-h-20" /></Field>
+        <Field label="Imagem do produto"><label className="flex min-h-20 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed text-xs text-slate-500"><ImagePlus size={18} />{file ? file.name : 'Selecionar foto'}<input type="file" accept="image/*" className="hidden" onChange={event => setFile(event.target.files?.[0] || null)} /></label></Field>
+        <Field label="Complementos"><textarea value={form.addonsText} onChange={event => setForm({ ...form, addonsText: event.target.value })} placeholder="Bacon, Queijo extra, Molho..." className="control min-h-20" /></Field>
+        <Field label="Ficha técnica / insumos"><textarea value={form.ingredientsText} onChange={event => setForm({ ...form, ingredientsText: event.target.value })} placeholder="Pão 1 un, Carne 160g..." className="control min-h-20" /></Field>
+      </div>
+
+      <div className="mt-4">
+        <span className="text-[10px] font-semibold text-slate-500">Canais disponíveis</span>
+        <div className="mt-2 flex flex-wrap gap-2">{['Mesa', 'Balcão', 'Delivery', 'QR/Totem'].map(channel => <button key={channel} onClick={() => toggleChannel(channel)} className={'rounded-full border px-3 py-2 text-[9px] font-semibold ' + (form.channels.includes(channel) ? 'border-[#f45f3f] bg-[#fff2ee] text-[#dd5335]' : '')}>{channel}</button>)}</div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button onClick={() => setForm({ ...form, active: !form.active })} className={'rounded-lg px-3 py-2 text-[10px] font-semibold ' + (form.active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>{form.active ? 'Produto ativo' : 'Produto inativo'}</button>
+        <button onClick={() => setForm({ ...form, featured: !form.featured })} className={'rounded-lg px-3 py-2 text-[10px] font-semibold ' + (form.featured ? 'bg-orange-50 text-orange-700' : 'bg-slate-100 text-slate-500')}>{form.featured ? 'Em destaque' : 'Sem destaque'}</button>
+        {form.cost > 0 && form.price > 0 && <span className="ml-auto rounded-lg bg-[#f7f7f5] px-3 py-2 text-[10px] font-semibold">Margem: {(((form.price - form.cost) / form.price) * 100).toFixed(1)}%</span>}
+      </div>
+
+      <div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void save()} className="rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-bold text-white">Salvar produto</button></div>
+    </Modal>
+  );
+}
+
+function CategoryEditor({ category, run, onClose }: { category: MenuCategory | null; run: ViewProps['run']; onClose: () => void }) {
+  const [name, setName] = useState(category?.name || '');
+  const [order, setOrder] = useState(category?.order || 1);
+  const [active, setActive] = useState(category?.active ?? true);
+  const [imageUrl, setImageUrl] = useState(category?.imageUrl || '');
+  const [file, setFile] = useState<File | null>(null);
+
+  const save = async () => {
+    if (!name.trim()) return;
+    await run(async () => {
+      let id = category?.id;
+      const payload = { name: name.trim(), order: Number(order), active, imageUrl };
+      if (id) {
+        await api.put('/api/menu/categories/' + id, payload);
+      } else {
+        const created = await api.post('/api/menu/categories', payload);
+        id = created.data.id;
+      }
+      if (file && id) {
+        const image = await compressImage(file);
+        await api.post('/api/menu/categories/' + id + '/image', image);
+      }
+    }, category ? 'Categoria atualizada.' : 'Categoria cadastrada.');
+    onClose();
+  };
+
+  return (
+    <Modal title={category ? 'Editar categoria' : 'Nova categoria'} onClose={onClose}>
+      <div className="space-y-3">
+        <Field label="Nome"><input value={name} onChange={event => setName(event.target.value)} className="control" /></Field>
+        <Field label="Ordem"><input type="number" min="1" value={order} onChange={event => setOrder(Number(event.target.value))} className="control" /></Field>
+        <Field label="Imagem por URL"><input value={imageUrl} onChange={event => setImageUrl(event.target.value)} className="control" placeholder="https://..." /></Field>
+        <Field label="Imagem da categoria"><label className="flex min-h-20 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed text-xs text-slate-500"><ImagePlus size={18} />{file ? file.name : 'Selecionar foto'}<input type="file" accept="image/*" className="hidden" onChange={event => setFile(event.target.files?.[0] || null)} /></label></Field>
+        <button onClick={() => setActive(!active)} className={'rounded-lg px-3 py-2 text-[10px] font-semibold ' + (active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>{active ? 'Categoria ativa' : 'Categoria inativa'}</button>
+      </div>
+      <div className="mt-5 flex justify-between gap-2">
+        {category ? <button onClick={() => { if (confirm('Excluir categoria ' + category.name + '?')) void run(() => api.delete('/api/menu/categories/' + category.id), 'Categoria excluída.').then(onClose); }} className="rounded-xl border border-red-200 px-4 py-3 text-xs text-red-500">Excluir</button> : <span />}
+        <div className="flex gap-2"><button onClick={onClose} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void save()} className="rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-bold text-white">Salvar categoria</button></div>
+      </div>
+    </Modal>
+  );
+}
+
+async function compressImage(file: File): Promise<{ content: string; contentType: string }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Falha ao ler imagem'));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onerror = () => reject(new Error('Imagem inválida'));
+    element.onload = () => resolve(element);
+    element.src = dataUrl;
+  });
+
+  const max = 1200;
+  const scale = Math.min(1, max / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Falha ao processar imagem');
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const compressed = canvas.toDataURL('image/jpeg', 0.82);
+  return { content: compressed.split(',')[1] || '', contentType: 'image/jpeg' };
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return <div className="fixed inset-0 z-[80] grid place-items-center bg-black/35 p-4"><div className="w-full max-w-3xl rounded-2xl bg-[#fffefa] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-bold">{title}</h3><button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-sm">×</button></div>{children}</div></div>;
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="block text-[10px] font-semibold text-slate-500"><span className="mb-1 block">{label}</span>{children}</label>;
+}
+
+function SettingToggle({ icon, title, subtitle, enabled, onClick }: { icon: ReactNode; title: string; subtitle: string; enabled: boolean; onClick: () => void }) {
+  return <button onClick={onClick} className="flex w-full items-center gap-3 border-t border-[#f0efec] py-3 text-left first:border-t-0"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#e85b3a]">{icon}</span><span className="min-w-0 flex-1"><b className="block text-xs">{title}</b><small className="text-[9px] text-slate-400">{subtitle}</small></span><span className={'relative h-6 w-11 rounded-full transition ' + (enabled ? 'bg-emerald-500' : 'bg-slate-300')}><span className={'absolute top-1 h-4 w-4 rounded-full bg-white transition ' + (enabled ? 'left-6' : 'left-1')} /></span></button>;
+}
+
+function IntegrationCard({ icon, title }: { icon: ReactNode; title: string }) {
+  return <div className="rounded-xl border border-[#ece9e4] p-3"><span className="text-[#e85b3a]">{icon}</span><b className="mt-2 block text-[10px]">{title}</b><small className="text-[9px] text-slate-400">Disponível para integração</small></div>;
+}
+
+function QuickIcon({ icon }: { icon: ReactNode }) {
+  return <button className="grid h-12 place-items-center rounded-xl bg-[#f4f5f5] text-[#566066]">{icon}</button>;
+}
+
 function PayButton({ label, icon, active, onClick }: { label: string; icon: ReactNode; active: boolean; onClick: () => void }) {
   return <button onClick={onClick} className={'flex h-14 items-center justify-center gap-2 rounded-lg border text-[9px] font-bold ' + (active ? 'border-[#f45f3f] bg-[#fff3ef] text-[#e85b3a]' : 'border-[#ececf2] bg-white text-[#51586c]')}>{icon}{label}</button>;
 }
 
 function TablesView(props: ViewProps) {
+  const tableSearch = props.search.trim().toLowerCase();
+  const visibleTables = props.data.tables.filter(table => !tableSearch || table.name.toLowerCase().includes(tableSearch));
+
+  const statusTheme = (status: Table['status']) => {
+    if (status === 'Ocupada') return {
+      panel: 'border-[#12a35a] bg-[#baf2d3]',
+      badge: 'bg-white/80 text-[#087a42]',
+      label: 'Aberta',
+    };
+    if (status === 'Aguardando' || status === 'Fechamento') return {
+      panel: 'border-[#7052ca] bg-[#e5e0fa]',
+      badge: 'bg-white/80 text-[#5c40b5]',
+      label: 'Em atendimento',
+    };
+    return {
+      panel: 'border-[#899195] bg-[#e6e8e9]',
+      badge: 'bg-white/80 text-[#32383b]',
+      label: 'Livre',
+    };
+  };
+
   return (
-    <PageSection title="Mesas" subtitle="Mapa operacional e situação em tempo real">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {props.data.tables.map(table => (
-          <div
-            key={table.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => props.openTableOrder(table.name)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') props.openTableOrder(table.name);
-            }}
-            className="group cursor-pointer rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_8px_24px_rgba(46,42,38,0.035)] transition hover:-translate-y-0.5 hover:border-[#e6b6aa] hover:shadow-[0_12px_30px_rgba(46,42,38,0.065)] focus:outline-none focus:ring-2 focus:ring-[#f2b4a5]"
-          >
-            <div className="flex items-center justify-between"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#ef5a38]"><Utensils size={17} /></span><Badge value={table.status} /></div>
-            <h3 className="mt-4 text-sm font-bold">{table.name}</h3>
-            <p className="mt-1 text-[10px] text-slate-400">{table.seats} lugares {table.waiter ? '· ' + table.waiter : ''}</p>
-            <strong className="mt-3 block text-sm">{table.total ? BRL(table.total) : 'Disponível'}</strong>
-            <div className="mt-4 grid gap-2">
-              <span className="rounded-lg bg-[#f45f3f] py-2 text-center text-[10px] font-bold text-white transition group-hover:bg-[#df5132]">Abrir cardápio</span>
-              <button
-                onClick={event => {
-                  event.stopPropagation();
-                  void props.run(
-                    () => api.put('/api/tables/' + table.id + '/status', { status: table.status === 'Livre' ? 'Ocupada' : 'Livre' }),
-                    table.status === 'Livre' ? 'Mesa aberta.' : 'Mesa liberada.'
-                  );
-                }}
-                className={'w-full rounded-lg py-2 text-[10px] font-bold ' + (table.status === 'Livre' ? 'bg-[#fff0eb] text-[#e85b3a]' : 'bg-[#f2f3f6] text-[#50566a]')}
-              >
-                {table.status === 'Livre' ? 'Alterar para ocupada' : 'Liberar mesa'}
-              </button>
-            </div>
-          </div>
-        ))}
+    <section>
+      <div className="mb-5 flex flex-wrap items-center gap-3 border-b border-[#e3e5e6] pb-4">
+        <div className="mr-auto">
+          <h1 className="text-2xl font-bold text-[#282d31]">Início</h1>
+          <p className="mt-1 text-xs text-slate-400">Mesas, balcão e atendimento presencial.</p>
+        </div>
+        <button onClick={() => props.setPage('menu')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><QrCode size={16} />Cardápio QR Code</button>
+        <button onClick={() => props.setPage('reports')} className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><History size={16} />Histórico</button>
+        <button className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#596166] hover:bg-white"><Headphones size={16} />Suporte</button>
+        <button onClick={() => props.setPage('settings')} className="flex items-center gap-2 rounded-xl bg-[#79e7b1] px-4 py-3 text-xs font-semibold text-[#16653f] shadow-sm"><Store size={16} />Totem de Autoatendimento</button>
       </div>
-    </PageSection>
+
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <label className="flex h-12 min-w-[280px] max-w-[380px] flex-1 items-center gap-2 rounded-xl border border-[#cfd4d7] bg-white px-4">
+          <input value={props.search} onChange={event => {
+            const input = event.target as HTMLInputElement;
+            const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            native?.call(input, input.value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }} placeholder="Buscar..." className="min-w-0 flex-1 bg-transparent text-sm outline-none" readOnly />
+          <Search size={18} className="text-[#4d565b]" />
+        </label>
+        <button onClick={() => props.setPage('settings')} className="ml-auto flex h-12 items-center gap-2 rounded-xl bg-[#e4e6e7] px-5 text-xs font-semibold text-[#0e5f93]"><Settings size={16} />Configuração geral</button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <button onClick={() => {
+          props.setChannel('Balcão');
+          props.setTable('');
+          props.setPage('pdv');
+        }} className="min-h-[138px] rounded-xl border-4 border-[#12a35a] bg-[#baf2d3] p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 text-[11px] font-semibold text-[#087a42]"><ShoppingBag size={14} />Aberta</span>
+          <strong className="mt-5 block text-sm text-[#174d36]">BALCÃO</strong>
+          <div className="mt-2 flex items-center justify-between text-xs text-[#147849]"><span>{BRL(0)}</span><span className="flex items-center gap-1"><Clock3 size={14} />Sempre aberto</span></div>
+        </button>
+
+        {visibleTables.map((table, index) => {
+          const theme = statusTheme(table.status);
+          return (
+            <button key={table.id} onClick={() => props.openTableOrder(table.name)} className={'min-h-[138px] rounded-xl border-4 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ' + theme.panel}>
+              <span className={'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold ' + theme.badge}>
+                {table.status === 'Livre' ? <Check size={14} /> : <Utensils size={14} />}
+                {theme.label}
+              </span>
+              <strong className="mt-5 block text-sm">{table.name.toUpperCase()}</strong>
+              <div className="mt-2 flex items-center justify-between text-xs">
+                <span>{BRL(table.total)}</span>
+                {table.status !== 'Livre' && <span className="flex items-center gap-1"><Clock3 size={14} />{index % 3 === 0 ? '4 Minutos' : index % 3 === 1 ? '11 Horas' : '12 Horas'}</span>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -731,22 +1225,64 @@ function SettingsView(props: ViewProps) {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
     await props.run(() => api.put('/api/settings', props.settingsForm), 'Configurações salvas.');
   };
+
+  const toggle = (key: keyof AppSettings) => {
+    const current = props.settingsForm[key];
+    if (typeof current !== 'boolean') return;
+    props.setSettingsForm({ ...props.settingsForm, [key]: !current });
+  };
+
   return (
-    <PageSection title="Configurações" subtitle="Dados gerais e preferências">
-      <div className="grid gap-4 lg:grid-cols-2">
+    <PageSection title="Configurações" subtitle="Operação, atendimento, cardápio, pagamentos e dispositivos">
+      <div className="grid gap-4 xl:grid-cols-2">
         <Surface>
-          <SectionHead title="Estabelecimento" subtitle="Informações da unidade" />
-          <label className="block text-[10px] text-slate-500">Nome do restaurante<input value={props.settingsForm.restaurantName} onChange={event => props.setSettingsForm({ ...props.settingsForm, restaurantName: event.target.value })} className="mt-1 w-full rounded-lg border border-[#e5e6ec] p-3 text-xs outline-none focus:border-[#f08a73]" /></label>
-          <label className="mt-3 block text-[10px] text-slate-500">Unidade<input value={props.settingsForm.unit} onChange={event => props.setSettingsForm({ ...props.settingsForm, unit: event.target.value })} className="mt-1 w-full rounded-lg border border-[#e5e6ec] p-3 text-xs outline-none focus:border-[#f08a73]" /></label>
-          <button onClick={() => void save()} className="mt-4 rounded-lg bg-[#f45f3f] px-4 py-3 text-[10px] font-bold text-white">Salvar alterações</button>
+          <SectionHead title="Configuração geral" subtitle="Identidade e regras do salão" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Nome do restaurante"><input value={props.settingsForm.restaurantName} onChange={event => props.setSettingsForm({ ...props.settingsForm, restaurantName: event.target.value })} className="control" /></Field>
+            <Field label="Unidade"><input value={props.settingsForm.unit} onChange={event => props.setSettingsForm({ ...props.settingsForm, unit: event.target.value })} className="control" /></Field>
+            <Field label="Taxa de serviço (%)"><input type="number" min="0" max="30" value={props.settingsForm.serviceFee} onChange={event => props.setSettingsForm({ ...props.settingsForm, serviceFee: Number(event.target.value) })} className="control" /></Field>
+            <Field label="Horário de funcionamento"><input value={props.settingsForm.openingHours} onChange={event => props.setSettingsForm({ ...props.settingsForm, openingHours: event.target.value })} className="control" /></Field>
+            <Field label="Pedido mínimo delivery"><input type="number" value={props.settingsForm.deliveryMinimum} onChange={event => props.setSettingsForm({ ...props.settingsForm, deliveryMinimum: Number(event.target.value) })} className="control" /></Field>
+            <Field label="Frete grátis acima de"><input type="number" value={props.settingsForm.freeDeliveryFrom} onChange={event => props.setSettingsForm({ ...props.settingsForm, freeDeliveryFrom: Number(event.target.value) })} className="control" /></Field>
+          </div>
+          <button onClick={() => void save()} className="mt-4 rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-bold text-white">Salvar configuração geral</button>
         </Surface>
+
         <Surface>
-          <SectionHead title="Sistema" subtitle="Preferências operacionais" />
-          <Preference icon={<Bell size={16} />} title="Som de novo pedido" value="Ativo" />
-          <Preference icon={<MessageCircle size={16} />} title="Alertas operacionais" value="Ativo" />
-          <Preference icon={<Clock3 size={16} />} title="Atualização do painel" value="Automática" />
-          <button onClick={() => { if (confirm('Restaurar dados de demonstração?')) void props.run(() => api.post('/api/reset', {}), 'Demonstração restaurada.'); }} className="mt-4 flex items-center gap-2 rounded-lg border px-4 py-3 text-[10px] font-semibold text-slate-500"><RotateCcw size={14} />Restaurar demonstração</button>
+          <SectionHead title="Atendimento e canais" subtitle="Recursos que podem ser ativados por operação" />
+          <SettingToggle icon={<Percent size={16} />} title="Acréscimo automático / taxa de serviço" subtitle="Calcula a taxa no fechamento da mesa." enabled={props.settingsForm.automaticServiceFee} onClick={() => toggle('automaticServiceFee')} />
+          <SettingToggle icon={<QrCode size={16} />} title="Cardápio QR Code" subtitle="Exibe o cardápio digital para clientes." enabled={props.settingsForm.qrMenuEnabled} onClick={() => toggle('qrMenuEnabled')} />
+          <SettingToggle icon={<Smartphone size={16} />} title="App / modo garçom" subtitle="Atendimento móvel vinculado às mesas." enabled={props.settingsForm.waiterAppEnabled} onClick={() => toggle('waiterAppEnabled')} />
+          <SettingToggle icon={<Store size={16} />} title="Totem de autoatendimento" subtitle="Modo de pedido sem atendente." enabled={props.settingsForm.selfServiceEnabled} onClick={() => toggle('selfServiceEnabled')} />
+          <SettingToggle icon={<Truck size={16} />} title="Aceite automático do delivery" subtitle="Pedidos entram direto na operação." enabled={props.settingsForm.autoAcceptDelivery} onClick={() => toggle('autoAcceptDelivery')} />
         </Surface>
+
+        <Surface>
+          <SectionHead title="Pagamentos e fiscal" subtitle="Formas de pagamento e emissão" />
+          <SettingToggle icon={<QrCode size={16} />} title="Pix" subtitle="Disponível no fechamento de pedidos." enabled={props.settingsForm.pixEnabled} onClick={() => toggle('pixEnabled')} />
+          <SettingToggle icon={<CreditCard size={16} />} title="Cartão" subtitle="Crédito e débito no fechamento." enabled={props.settingsForm.cardEnabled} onClick={() => toggle('cardEnabled')} />
+          <SettingToggle icon={<Banknote size={16} />} title="Dinheiro" subtitle="Pagamento em espécie." enabled={props.settingsForm.cashEnabled} onClick={() => toggle('cashEnabled')} />
+          <SettingToggle icon={<ReceiptText size={16} />} title="Módulo fiscal" subtitle="Estrutura preparada para NFC-e / NF-e." enabled={props.settingsForm.fiscalEnabled} onClick={() => toggle('fiscalEnabled')} />
+        </Surface>
+
+        <Surface>
+          <SectionHead title="Produção, impressão e inteligência" subtitle="Diferenciais de operação" />
+          <SettingToggle icon={<ChefHat size={16} />} title="KDS de cozinha" subtitle="Fila digital de produção." enabled={props.settingsForm.kdsEnabled} onClick={() => toggle('kdsEnabled')} />
+          <SettingToggle icon={<Printer size={16} />} title="Impressão automática" subtitle="Preparação para impressoras por setor." enabled={props.settingsForm.autoPrint} onClick={() => toggle('autoPrint')} />
+          <SettingToggle icon={<AlertTriangle size={16} />} title="Alerta inteligente de estoque" subtitle="Sinaliza itens abaixo do mínimo." enabled={props.settingsForm.lowStockAlerts} onClick={() => toggle('lowStockAlerts')} />
+          <SettingToggle icon={<Clock3 size={16} />} title="Alerta de tempo de preparo" subtitle="Destaca pedidos acima do tempo esperado." enabled={props.settingsForm.prepAlerts} onClick={() => toggle('prepAlerts')} />
+          <SettingToggle icon={<Heart size={16} />} title="Fidelidade / CRM" subtitle="Base para recorrência e campanhas." enabled={props.settingsForm.loyaltyEnabled} onClick={() => toggle('loyaltyEnabled')} />
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <IntegrationCard icon={<Plug size={17} />} title="iFood" />
+            <IntegrationCard icon={<ReceiptText size={17} />} title="Contabilidade" />
+            <IntegrationCard icon={<CreditCard size={17} />} title="Smart POS" />
+          </div>
+        </Surface>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e9e5df] bg-[#fffefa] p-4">
+        <div><b className="text-xs">Manutenção da demonstração</b><p className="text-[10px] text-slate-400">Restaura somente os dados de exemplo do ambiente de prévia.</p></div>
+        <button onClick={() => { if (confirm('Restaurar dados de demonstração?')) void props.run(() => api.post('/api/reset', {}), 'Demonstração restaurada.'); }} className="flex items-center gap-2 rounded-lg border px-4 py-3 text-[10px] font-semibold text-slate-500"><RotateCcw size={14} />Restaurar demonstração</button>
       </div>
     </PageSection>
   );
