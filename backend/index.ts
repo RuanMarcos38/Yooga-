@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { ai, db, storage, router, json, error } from '@appdeploy/sdk';
 
 type P = {
@@ -363,8 +364,289 @@ function applyProduct(product: P, value: Partial<P>): P {
   };
 }
 
+
+type IntegrationConfig = {
+  providerId: string;
+  enabled: boolean;
+  status: 'Ativo' | 'Configurado' | 'Aguardando credenciais' | 'Inativo' | 'Erro';
+  fields: Record<string, string>;
+  updatedAt: string;
+  message?: string;
+};
+
+type OpenApiKeyRecord = {
+  name: string;
+  prefix: string;
+  keyHash: string;
+  active: boolean;
+  createdAt: string;
+};
+
+const integrationIds = [
+  'pix-auto', 'ifood', '99food', 'keeta', 'wallet-pay', 'pos', 'totem', 'zapturbo',
+  'boletim', 'kds', 'driver-app', 'foody-delivery', 'meta-capi', 'custom-domain',
+  'google-analytics', 'google-tag-manager', 'facebook-pixel', 'open-api',
+];
+
+const externalCredentialIntegrations = new Set([
+  'pix-auto', 'ifood', '99food', 'keeta', 'wallet-pay', 'pos', 'zapturbo',
+  'boletim', 'driver-app', 'foody-delivery', 'meta-capi',
+]);
+
+const sanitizeIntegrationFields = (raw: unknown) => {
+  const input = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (/(secret|token|password|api.?key|authorization)/i.test(key)) continue;
+    output[key] = String(value ?? '').trim().slice(0, 300);
+  }
+  return output;
+};
+
+async function listIntegrationConfigs() {
+  const result = await db.list<IntegrationConfig>('mesa_integrations', { limit: 50 });
+  const map = new Map(result.items.map(item => [item.providerId, item]));
+  return integrationIds.map(providerId => {
+    const item = map.get(providerId);
+    return {
+      id: providerId,
+      enabled: item?.enabled ?? false,
+      status: item?.status ?? 'Inativo',
+      fields: item?.fields ?? {},
+      updatedAt: item?.updatedAt,
+      message: item?.message,
+    };
+  });
+}
+
+async function saveIntegrationConfig(providerId: string, patch: Partial<IntegrationConfig>) {
+  const result = await db.list<IntegrationConfig>('mesa_integrations', { limit: 50 });
+  const existing = result.items.find(item => item.providerId === providerId);
+  const record: IntegrationConfig = {
+    providerId,
+    enabled: patch.enabled ?? existing?.enabled ?? false,
+    status: patch.status ?? existing?.status ?? 'Configurado',
+    fields: patch.fields ?? existing?.fields ?? {},
+    updatedAt: new Date().toISOString(),
+    message: patch.message ?? existing?.message,
+  };
+  if (existing) {
+    const [ok] = await db.update('mesa_integrations', [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
+    if (!ok) throw new Error('integration update failed');
+  } else {
+    const [id] = await db.add('mesa_integrations', [record as unknown as Record<string, unknown>]);
+    if (!id) throw new Error('integration create failed');
+  }
+  return { id: providerId, ...record };
+}
+
+const hashApiKey = (key: string) => createHash('sha256').update(key).digest('hex');
+
+async function validateOpenApiKey(event: any) {
+  const headers = event?.headers || {};
+  const raw = headers['x-api-key'] || headers['X-Api-Key'] || headers['X-API-KEY'];
+  if (!raw || typeof raw !== 'string') return false;
+  const hash = hashApiKey(raw);
+  const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
+  return result.items.some(item => item.active && item.keyHash === hash);
+}
+
+function validateIntegration(providerId: string, fields: Record<string, string>) {
+  if (providerId === 'google-analytics') return /^G-[A-Z0-9]+$/i.test(fields.measurementId || '') ? 'active' : 'invalid';
+  if (providerId === 'google-tag-manager') return /^GTM-[A-Z0-9]+$/i.test(fields.containerId || '') ? 'active' : 'invalid';
+  if (providerId === 'facebook-pixel') return /^\d{8,25}$/.test(fields.pixelId || '') ? 'active' : 'invalid';
+  if (providerId === 'custom-domain') return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(fields.domain || '') ? 'active' : 'invalid';
+  if (providerId === 'totem' || providerId === 'kds') return 'active';
+  if (externalCredentialIntegrations.has(providerId)) return Object.values(fields).some(Boolean) ? 'credentials' : 'invalid';
+  return Object.values(fields).some(Boolean) ? 'configured' : 'configured';
+}
+
 export const handler = router({
   'GET /api/_healthcheck': [async () => json({ message: 'Success' })],
+
+  'GET /api/integrations': [async () => json(await listIntegrationConfigs())],
+
+  'PUT /api/integrations/:id': [async ({ params, body }) => {
+    if (!integrationIds.includes(params.id)) return error('Integração desconhecida', 404);
+    const value = body as { fields?: Record<string, unknown> };
+    const fields = sanitizeIntegrationFields(value.fields);
+    const saved = await saveIntegrationConfig(params.id, {
+      fields,
+      enabled: false,
+      status: 'Configurado',
+      message: 'Configuração salva. Use Testar conexão para validar o conector.',
+    });
+    return json(saved);
+  }],
+
+  'POST /api/integrations/:id/test': [async ({ params }) => {
+    if (!integrationIds.includes(params.id)) return error('Integração desconhecida', 404);
+    const all = await listIntegrationConfigs();
+    const current = all.find(item => item.id === params.id);
+    const fields = current?.fields || {};
+
+    if (params.id === 'open-api') {
+      const keys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
+      const active = keys.items.some(item => item.active);
+      const saved = await saveIntegrationConfig(params.id, {
+        fields,
+        enabled: active,
+        status: active ? 'Ativo' : 'Inativo',
+        message: active ? 'API aberta ativa com chave válida.' : 'Crie uma chave para ativar a API aberta.',
+      });
+      return json(saved);
+    }
+
+    const result = validateIntegration(params.id, fields);
+    if (result === 'invalid') {
+      const saved = await saveIntegrationConfig(params.id, {
+        fields,
+        enabled: false,
+        status: 'Erro',
+        message: 'Revise os campos obrigatórios antes de ativar.',
+      });
+      return json(saved);
+    }
+
+    if (result === 'credentials') {
+      const saved = await saveIntegrationConfig(params.id, {
+        fields,
+        enabled: false,
+        status: 'Aguardando credenciais',
+        message: 'Configuração local validada. Falta a autorização/credencial oficial do provedor para ativar a conexão real.',
+      });
+      return json(saved);
+    }
+
+    const saved = await saveIntegrationConfig(params.id, {
+      fields,
+      enabled: true,
+      status: 'Ativo',
+      message: result === 'active' ? 'Configuração validada e ativa no sistema.' : 'Configuração validada.',
+    });
+
+    if (params.id === 'totem' || params.id === 'kds') {
+      const currentState = await get();
+      if (params.id === 'totem') currentState.state.settings.selfServiceEnabled = true;
+      if (params.id === 'kds') currentState.state.settings.kdsEnabled = true;
+      await save(currentState.id, currentState.state);
+    }
+
+    return json(saved);
+  }],
+
+  'GET /api/open/v1/keys': [async () => {
+    const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
+    return json(result.items.map(item => ({
+      id: item.id,
+      name: item.name,
+      prefix: item.prefix,
+      active: item.active,
+      createdAt: item.createdAt,
+    })));
+  }],
+
+  'POST /api/open/v1/keys': [async ({ body }) => {
+    const value = body as { name?: string };
+    const name = value.name?.trim();
+    if (!name) return error('Nome da chave é obrigatório', 400);
+    const key = 'mrf_live_' + randomBytes(24).toString('hex');
+    const prefix = key.slice(0, 16);
+    const record: OpenApiKeyRecord = {
+      name: name.slice(0, 80),
+      prefix,
+      keyHash: hashApiKey(key),
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    const [id] = await db.add('mesa_open_api_keys', [record as unknown as Record<string, unknown>]);
+    if (!id) return error('Falha ao gerar chave', 500);
+    await saveIntegrationConfig('open-api', {
+      enabled: true,
+      status: 'Ativo',
+      fields: {},
+      message: 'API aberta ativa com chave válida.',
+    });
+    return json({ id, key, prefix, createdAt: record.createdAt }, 201);
+  }],
+
+  'DELETE /api/open/v1/keys/:id': [async ({ params }) => {
+    const [ok] = await db.delete('mesa_open_api_keys', [params.id]);
+    if (!ok) return error('Chave não encontrada', 404);
+    return json({ revoked: true });
+  }],
+
+  'GET /api/open/v1/health': [async () => json({ status: 'ok', service: 'Mesa Restaurant OS Open API', version: 'v1' })],
+
+  'GET /api/open/v1/menu': [async ({ event }) => {
+    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
+    const current = await get();
+    return json(current.state.products.filter(product => product.active).map(product => ({
+      id: product.id,
+      sku: product.code || product.id,
+      name: product.name,
+      category: product.category,
+      price: product.price,
+      stock: product.stock,
+      description: product.description || '',
+      prepTime: product.prepTime || 15,
+      channels: product.channels || [],
+    })));
+  }],
+
+  'GET /api/open/v1/tables': [async ({ event }) => {
+    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
+    const current = await get();
+    return json(current.state.tables);
+  }],
+
+  'GET /api/open/v1/orders': [async ({ event }) => {
+    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
+    const current = await get();
+    return json(current.state.orders.slice(0, 100));
+  }],
+
+  'POST /api/open/v1/orders': [async ({ event, body }) => {
+    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
+    const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: Array<{ productId?: string; qty?: number }> };
+    if (!value.items?.length) return error('Pedido sem itens', 400);
+    const current = await get();
+    const items: I[] = [];
+    for (const requested of value.items) {
+      const product = current.state.products.find(item => item.id === requested.productId);
+      const qty = Number(requested.qty || 0);
+      if (!product || !product.active || qty <= 0) return error('Produto/quantidade inválido', 400);
+      items.push({ productId: product.id, name: product.name, qty, price: product.price });
+    }
+    const subtotal = Number(items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
+    const fee = value.channel === 'Mesa' && current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
+    const total = Number((subtotal + fee).toFixed(2));
+    const createdAt = new Date().toISOString();
+    const order: O = {
+      id: 'api-o' + Date.now(),
+      code: '#API' + String(Date.now()).slice(-6),
+      channel: value.channel || 'API',
+      table: value.table,
+      customer: value.customer || 'Integração API',
+      items,
+      total,
+      status: 'Novo',
+      createdAt,
+      updatedAt: createdAt,
+      paymentMethod: value.paymentMethod || 'Externo',
+    };
+    current.state.orders.unshift(order);
+    if (value.table) {
+      const table = current.state.tables.find(item => item.name === value.table);
+      if (table) {
+        table.status = 'Ocupada';
+        table.total = Number((table.total + total).toFixed(2));
+      }
+    }
+    audit(current.state, 'order', order.id, 'Pedido recebido pela API aberta', order.code + ' · ' + order.channel);
+    await save(current.id, current.state);
+    return json(order, 201);
+  }],
 
   'POST /api/assistant': [async ({ body }) => {
     const value = body as {

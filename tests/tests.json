@@ -1,97 +1,95 @@
 [
   {
-    "name": "Assistente IA ajuda o estabelecimento e substitui Como operar",
+    "name": "Ajustes abre Central de Integrações e salva Google Analytics",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "remoção do bloco Como operar",
-      "Assistente de IA flutuante",
-      "POST /api/assistant modo establishment",
-      "orientação operacional contextual"
+      "novo hub de Ajustes",
+      "catálogo de integrações",
+      "PUT /api/integrations/:id",
+      "POST /api/integrations/:id/test",
+      "Google Analytics"
     ],
-    "description": "Valida que o cartão antigo da lateral foi removido e o novo assistente ajuda sem ocupar permanentemente a área operacional.",
+    "description": "Valida o novo fluxo principal de configurações e uma integração configurável sem credencial secreta.",
     "steps": [
-      "Abrir o sistema administrativo e confirmar que o cartão Como operar não aparece na lateral",
-      "Abrir o botão Assistente IA no canto inferior direito",
-      "Perguntar Como abrir ou fechar o caixa?",
-      "Observar a resposta do assistente"
+      "Abrir Configurações/Ajustes",
+      "Abrir Central de Integrações",
+      "Selecionar Google Analytics",
+      "Informar G-TEST12345 e salvar",
+      "Clicar em Testar conexão"
     ],
-    "expected": "O painel do assistente abre sobreposto no canto, responde com orientação do módulo de caixa e o restante do sistema continua visível."
+    "expected": "A integração fica salva e o sistema retorna uma validação do ID configurado."
   },
   {
-    "name": "Assistente do cliente respeita acesso limitado",
+    "name": "iFood permanece aguardando autorização oficial",
+    "viewport": "desktop",
+    "covers": [
+      "integração iFood",
+      "status Aguardando credenciais",
+      "guardrail de integração externa"
+    ],
+    "description": "Garante que o sistema não simula uma conexão externa sem autorização oficial.",
+    "steps": [
+      "Abrir Ajustes > Integrações > iFood",
+      "Informar IDs de loja e merchant",
+      "Salvar configuração",
+      "Clicar em Testar conexão"
+    ],
+    "expected": "O conector informa que a configuração local foi validada, mas permanece Aguardando credenciais/autorização oficial."
+  },
+  {
+    "name": "Gerar chave e usar API aberta para cardápio",
+    "viewport": "desktop",
+    "covers": [
+      "API Aberta",
+      "POST /api/open/v1/keys",
+      "GET /api/open/v1/keys",
+      "GET /api/open/v1/menu",
+      "proteção por x-api-key"
+    ],
+    "description": "Valida criação de credencial da API própria e disponibilidade do endpoint de cardápio protegido.",
+    "steps": [
+      "Abrir Ajustes > API Aberta",
+      "Gerar uma chave chamada QA API",
+      "Confirmar que a chave completa é exibida uma única vez",
+      "Confirmar que a lista mostra a nova chave pelo prefixo"
+    ],
+    "expected": "A nova chave aparece na lista e a documentação visível indica o endpoint GET /api/open/v1/menu protegido por x-api-key."
+  },
+  {
+    "name": "Revogar chave da API aberta",
+    "viewport": "desktop",
+    "covers": [
+      "DELETE /api/open/v1/keys/:id",
+      "revogação de acesso",
+      "gestão de chaves"
+    ],
+    "description": "Valida o controle administrativo de credenciais da API aberta.",
+    "setup": [
+      "Criar uma chave chamada Chave Revogar usando Ajustes > API Aberta"
+    ],
+    "steps": [
+      "Na lista de chaves localizar Chave Revogar",
+      "Clicar em Revogar e confirmar"
+    ],
+    "expected": "A chave deixa de aparecer entre as chaves ativas."
+  },
+  {
+    "name": "Ajustes e integrações permanecem utilizáveis no mobile",
     "viewport": "mobile",
     "covers": [
-      "Assistente de IA no Modo Cliente",
-      "POST /api/assistant modo customer",
-      "limite de informações administrativas",
-      "responsividade mobile"
+      "hub de Ajustes responsivo",
+      "cards de Cadastros/Delivery/Relatórios",
+      "catálogo de integrações responsivo",
+      "módulos existentes preservados"
     ],
-    "description": "Valida que a IA do cliente não orienta sobre áreas internas do estabelecimento.",
+    "description": "Verifica a experiência móvel sem alterar a navegação existente do SaaS.",
     "steps": [
-      "Abrir o link do cliente da Mesa 01 em viewport mobile",
-      "Abrir Assistente IA",
-      "Perguntar Como acesso o estoque e o financeiro?"
+      "Abrir Ajustes em viewport mobile",
+      "Rolar por Cadastros, Delivery, Relatórios e Configurações",
+      "Abrir Integrações",
+      "Filtrar por Performance"
     ],
-    "expected": "O assistente informa que essas áreas são restritas ao estabelecimento e mantém a ajuda limitada à experiência da mesa e do pedido."
-  },
-  {
-    "name": "Falha temporária do assistente mostra mensagem sem bloquear sistema",
-    "viewport": "desktop",
-    "covers": [
-      "tratamento de erro do Assistente de IA",
-      "POST /api/assistant falha",
-      "continuidade da interface"
-    ],
-    "description": "Valida que uma indisponibilidade da IA não impede o uso normal do SaaS.",
-    "qa_faults": [
-      {
-        "method": "POST",
-        "path": "/api/assistant",
-        "status": 503,
-        "body_json": {
-          "error": "Assistente temporariamente indisponível"
-        }
-      }
-    ],
-    "steps": [
-      "Abrir Assistente IA no sistema administrativo",
-      "Perguntar Como cadastrar um produto?"
-    ],
-    "expected": "Uma mensagem visível informa que o assistente está temporariamente indisponível e os módulos do sistema continuam utilizáveis."
-  },
-  {
-    "name": "Assistente não interfere no PDV e nas mesas",
-    "viewport": "desktop",
-    "covers": [
-      "PDV preservado",
-      "Mesas preservadas",
-      "posição não intrusiva do Assistente de IA"
-    ],
-    "description": "Verifica que o botão flutuante não altera a estrutura operacional existente.",
-    "steps": [
-      "Abrir Pedidos / PDV",
-      "Confirmar produtos e painel da mesa/pedido",
-      "Abrir Mesas",
-      "Confirmar cards e rolagem das mesas"
-    ],
-    "expected": "PDV e Mesas mantêm sua estrutura e o Assistente IA fica restrito ao canto inferior direito."
-  },
-  {
-    "name": "Fluxos de caixa e cliente continuam preservados",
-    "viewport": "desktop",
-    "covers": [
-      "Dashboard",
-      "abrir e fechar caixa",
-      "Modo Cliente",
-      "regressão dos recursos existentes"
-    ],
-    "description": "Garante que a inclusão da IA não remove os recursos operacionais anteriores.",
-    "steps": [
-      "Abrir Dashboard e confirmar o status do caixa",
-      "Abrir Histórico / Caixa",
-      "Abrir o link do cliente da Mesa 01"
-    ],
-    "expected": "Dashboard, Caixa e Modo Cliente permanecem acessíveis e funcionais após a inclusão do assistente."
+    "expected": "Os cards reorganizam-se no mobile e as integrações de performance continuam acessíveis sem quebrar o layout."
   }
 ]

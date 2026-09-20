@@ -49,6 +49,18 @@ import {
   Store,
   Send,
   X,
+  Globe2,
+  KeyRound,
+  Link2,
+  RefreshCw,
+  Code2,
+  MapPinned,
+  UserCog,
+  BadgePercent,
+  Gift,
+  LogOut,
+  CircleDollarSign,
+  Megaphone,
 } from 'lucide-react';
 
 type Product = {
@@ -1930,11 +1942,62 @@ function ReportsView(props: ViewProps) {
   );
 }
 
+
+type IntegrationState = {
+  id: string;
+  enabled: boolean;
+  status: 'Ativo' | 'Configurado' | 'Aguardando credenciais' | 'Inativo' | 'Erro';
+  fields: Record<string, string>;
+  updatedAt?: string;
+  message?: string;
+};
+
+type OpenApiKeyInfo = {
+  id: string;
+  name: string;
+  prefix: string;
+  active: boolean;
+  createdAt: string;
+};
+
+type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'open-api';
+
+const integrationCatalog = [
+  { id: 'pix-auto', name: 'Pix Automático', category: 'Pagamentos', description: 'Estrutura para recebimento e conciliação automática de pagamentos via Pix.', badge: 'Provedor externo', icon: QrCode },
+  { id: 'ifood', name: 'iFood', category: 'Marketplaces', description: 'Centralize pedidos, códigos PDV e sincronização operacional do marketplace.', badge: 'Autorização oficial', icon: ShoppingBag },
+  { id: '99food', name: '99Food', category: 'Marketplaces', description: 'Receba pedidos da loja 99Food no gestor e concentre a operação.', badge: 'Autorização oficial', icon: Bike },
+  { id: 'keeta', name: 'Keeta', category: 'Marketplaces', description: 'Conector de pedidos e identificação da loja Keeta.', badge: 'Autorização oficial', icon: Truck },
+  { id: 'wallet-pay', name: 'Apple e Google Pay', category: 'Pagamentos', description: 'Preparação para carteiras digitais em pagamentos compatíveis.', badge: 'Provedor externo', icon: Smartphone },
+  { id: 'pos', name: 'Maquininha POS', category: 'Pagamentos', description: 'Configuração de terminal e integração de pagamentos presenciais.', badge: 'Provedor externo', icon: CreditCard },
+  { id: 'totem', name: 'Totem', category: 'Operação', description: 'Autoatendimento conectado ao cardápio e ao fluxo do estabelecimento.', badge: 'Nativo', icon: Store },
+  { id: 'zapturbo', name: 'ZapTurbo', category: 'Performance', description: 'Base de automação para campanhas e relacionamento via WhatsApp.', badge: 'Conector', icon: Megaphone },
+  { id: 'boletim', name: 'Boletim', category: 'Performance', description: 'Resumo operacional e indicadores preparados para envio ao WhatsApp.', badge: 'Conector', icon: MessageCircle },
+  { id: 'kds', name: 'KDS', category: 'Operação', description: 'Painel de cozinha em tempo real integrado aos pedidos.', badge: 'Nativo', icon: ChefHat },
+  { id: 'driver-app', name: 'App do Entregador', category: 'Logística', description: 'Estrutura de operação para entregadores e acompanhamento de rotas.', badge: 'Conector', icon: Bike },
+  { id: 'foody-delivery', name: 'Foody Delivery', category: 'Logística', description: 'Conector para solicitação e acompanhamento de entregas terceirizadas.', badge: 'Provedor externo', icon: Truck },
+  { id: 'meta-capi', name: 'API de Conversões', category: 'Performance', description: 'Preparação para eventos server-side de campanhas Meta.', badge: 'Credencial necessária', icon: BarChart3 },
+  { id: 'custom-domain', name: 'Domínio Próprio', category: 'Performance', description: 'Configuração do domínio personalizado do cardápio e atendimento.', badge: 'Configuração DNS', icon: Globe2 },
+  { id: 'google-analytics', name: 'Google Analytics', category: 'Performance', description: 'Cadastro do ID GA4 para mensuração do cardápio digital.', badge: 'Configurável', icon: BarChart3 },
+  { id: 'google-tag-manager', name: 'Google Tag Manager', category: 'Performance', description: 'Cadastro do container GTM para governança de tags e eventos.', badge: 'Configurável', icon: Code2 },
+  { id: 'facebook-pixel', name: 'Facebook Pixel', category: 'Performance', description: 'Cadastro do Pixel ID para rastreamento do cardápio digital.', badge: 'Configurável', icon: BadgePercent },
+  { id: 'open-api', name: 'API Aberta + Webhooks', category: 'Operação', description: 'API REST própria para integrar cardápio, mesas e pedidos com sistemas externos.', badge: 'Nativo', icon: KeyRound },
+] as const;
+
 function SettingsView(props: ViewProps) {
-  const save = async () => {
+  const [section, setSection] = useState<SettingsSection>('hub');
+  const [filter, setFilter] = useState('Todas');
+  const [integrations, setIntegrations] = useState<IntegrationState[]>([]);
+  const [selectedIntegration, setSelectedIntegration] = useState<string | null>(null);
+  const [integrationFields, setIntegrationFields] = useState<Record<string, string>>({});
+  const [integrationMessage, setIntegrationMessage] = useState('');
+  const [integrationBusy, setIntegrationBusy] = useState(false);
+  const [apiKeys, setApiKeys] = useState<OpenApiKeyInfo[]>([]);
+  const [newApiKey, setNewApiKey] = useState('');
+  const [apiKeyName, setApiKeyName] = useState('Integração principal');
+
+  const saveGeneral = async () => {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
-    await props.run(() => api.put('/api/settings', props.settingsForm), 'Configurações salvas.');
-  };
+    await props.run(() => api.put('/api/settings', props.settingsForm), 'Configurações salvas.');  };
 
   const toggle = (key: keyof AppSettings) => {
     const current = props.settingsForm[key];
@@ -1942,58 +2005,387 @@ function SettingsView(props: ViewProps) {
     props.setSettingsForm({ ...props.settingsForm, [key]: !current });
   };
 
-  return (
-    <PageSection title="Configurações" subtitle="Operação, atendimento, cardápio, pagamentos e dispositivos">
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Surface>
-          <SectionHead title="Configuração geral" subtitle="Identidade e regras do salão" />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Nome do restaurante"><input value={props.settingsForm.restaurantName} onChange={event => props.setSettingsForm({ ...props.settingsForm, restaurantName: event.target.value })} className="control" /></Field>
-            <Field label="Unidade"><input value={props.settingsForm.unit} onChange={event => props.setSettingsForm({ ...props.settingsForm, unit: event.target.value })} className="control" /></Field>
-            <Field label="Taxa de serviço (%)"><input type="number" min="0" max="30" value={props.settingsForm.serviceFee} onChange={event => props.setSettingsForm({ ...props.settingsForm, serviceFee: Number(event.target.value) })} className="control" /></Field>
-            <Field label="Horário de funcionamento"><input value={props.settingsForm.openingHours} onChange={event => props.setSettingsForm({ ...props.settingsForm, openingHours: event.target.value })} className="control" /></Field>
-            <Field label="Pedido mínimo delivery"><input type="number" value={props.settingsForm.deliveryMinimum} onChange={event => props.setSettingsForm({ ...props.settingsForm, deliveryMinimum: Number(event.target.value) })} className="control" /></Field>
-            <Field label="Frete grátis acima de"><input type="number" value={props.settingsForm.freeDeliveryFrom} onChange={event => props.setSettingsForm({ ...props.settingsForm, freeDeliveryFrom: Number(event.target.value) })} className="control" /></Field>
-          </div>
-          <button onClick={() => void save()} className="mt-4 rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-bold text-white">Salvar configuração geral</button>
-        </Surface>
+  const loadIntegrations = async () => {
+    const response = await api.get('/api/integrations');
+    setIntegrations(response.data as IntegrationState[]);
+  };
 
-        <Surface>
-          <SectionHead title="Atendimento e canais" subtitle="Recursos que podem ser ativados por operação" />
-          <SettingToggle icon={<Percent size={16} />} title="Acréscimo automático / taxa de serviço" subtitle="Calcula a taxa no fechamento da mesa." enabled={props.settingsForm.automaticServiceFee} onClick={() => toggle('automaticServiceFee')} />
-          <SettingToggle icon={<QrCode size={16} />} title="Cardápio QR Code" subtitle="Exibe o cardápio digital para clientes." enabled={props.settingsForm.qrMenuEnabled} onClick={() => toggle('qrMenuEnabled')} />
-          <SettingToggle icon={<Smartphone size={16} />} title="App / modo garçom" subtitle="Atendimento móvel vinculado às mesas." enabled={props.settingsForm.waiterAppEnabled} onClick={() => toggle('waiterAppEnabled')} />
-          <SettingToggle icon={<Store size={16} />} title="Totem de autoatendimento" subtitle="Modo de pedido sem atendente." enabled={props.settingsForm.selfServiceEnabled} onClick={() => toggle('selfServiceEnabled')} />
-          <SettingToggle icon={<Truck size={16} />} title="Aceite automático do delivery" subtitle="Pedidos entram direto na operação." enabled={props.settingsForm.autoAcceptDelivery} onClick={() => toggle('autoAcceptDelivery')} />
-        </Surface>
+  const loadApiKeys = async () => {
+    const response = await api.get('/api/open/v1/keys');
+    setApiKeys(response.data as OpenApiKeyInfo[]);
+  };
 
+  useEffect(() => {
+    if (section === 'integrations' || section === 'open-api') {
+      void loadIntegrations().catch(() => setIntegrationMessage('Não foi possível carregar as integrações.'));
+    }
+    if (section === 'open-api') {
+      void loadApiKeys().catch(() => setIntegrationMessage('Não foi possível carregar as chaves da API.'));
+    }
+  }, [section]);
+
+  const openIntegration = (id: string) => {
+    if (id === 'open-api') {
+      setSection('open-api');
+      setSelectedIntegration(null);
+      return;
+    }
+    const saved = integrations.find(item => item.id === id);
+    setIntegrationFields(saved?.fields || {});
+    setIntegrationMessage(saved?.message || '');
+    setSelectedIntegration(id);
+  };
+
+  const fieldSpec = (id: string) => {
+    const commonStore = [{ key: 'storeId', label: 'ID da loja / estabelecimento', placeholder: 'Informe o ID fornecido pelo parceiro' }];
+    if (id === 'ifood') return [...commonStore, { key: 'merchantId', label: 'Merchant ID', placeholder: 'ID comercial do iFood' }, { key: 'syncMode', label: 'Sincronização', placeholder: 'Pedidos, status, cardápio' }];
+    if (id === '99food' || id === 'keeta') return commonStore;
+    if (id === 'google-analytics') return [{ key: 'measurementId', label: 'ID de mensuração GA4', placeholder: 'G-XXXXXXXXXX' }];
+    if (id === 'google-tag-manager') return [{ key: 'containerId', label: 'Container ID', placeholder: 'GTM-XXXXXXX' }];
+    if (id === 'facebook-pixel') return [{ key: 'pixelId', label: 'Pixel ID', placeholder: '123456789012345' }];
+    if (id === 'meta-capi') return [{ key: 'pixelId', label: 'Pixel ID', placeholder: '123456789012345' }, { key: 'datasetId', label: 'Dataset ID', placeholder: 'Opcional' }];
+    if (id === 'custom-domain') return [{ key: 'domain', label: 'Domínio', placeholder: 'cardapio.seudominio.com.br' }];
+    if (id === 'pos') return [{ key: 'terminalId', label: 'ID do terminal', placeholder: 'Terminal / serial' }, { key: 'provider', label: 'Adquirente', placeholder: 'Nome do provedor' }];
+    if (id === 'pix-auto') return [{ key: 'merchantDocument', label: 'CNPJ do estabelecimento', placeholder: '00.000.000/0000-00' }, { key: 'provider', label: 'Provedor', placeholder: 'Banco / PSP' }];
+    if (id === 'wallet-pay') return [{ key: 'merchantId', label: 'Merchant ID', placeholder: 'Identificador do estabelecimento' }];
+    if (id === 'zapturbo' || id === 'boletim') return [{ key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' }];
+    if (id === 'driver-app' || id === 'foody-delivery') return [{ key: 'operationName', label: 'Identificação da operação', placeholder: 'Nome / ID da frota' }];
+    if (id === 'totem') return [{ key: 'stationName', label: 'Identificação do Totem', placeholder: 'Totem entrada' }];
+    if (id === 'kds') return [{ key: 'stationName', label: 'Estação KDS', placeholder: 'Cozinha principal' }];
+    return [];
+  };
+
+  const saveIntegration = async () => {
+    if (!selectedIntegration) return;
+    setIntegrationBusy(true);
+    setIntegrationMessage('');
+    try {
+      const response = await api.put('/api/integrations/' + selectedIntegration, { fields: integrationFields });
+      const saved = response.data as IntegrationState;
+      setIntegrationMessage(saved.message || 'Configuração salva.');
+      await loadIntegrations();
+    } catch {
+      setIntegrationMessage('Não foi possível salvar a configuração.');
+    } finally {
+      setIntegrationBusy(false);
+    }
+  };
+
+  const testIntegration = async () => {
+    if (!selectedIntegration) return;
+    setIntegrationBusy(true);
+    setIntegrationMessage('');
+    try {
+      const response = await api.post('/api/integrations/' + selectedIntegration + '/test', {});
+      setIntegrationMessage(String(response.data?.message || 'Teste concluído.'));
+      await loadIntegrations();
+    } catch {
+      setIntegrationMessage('Não foi possível testar a integração.');
+    } finally {
+      setIntegrationBusy(false);
+    }
+  };
+
+  const createApiKey = async () => {
+    if (!apiKeyName.trim()) return;
+    const response = await api.post('/api/open/v1/keys', { name: apiKeyName.trim() });
+    setNewApiKey(String(response.data?.key || ''));
+    await loadApiKeys();
+  };
+
+  const revokeApiKey = async (id: string) => {
+    if (!confirm('Revogar esta chave da API?')) return;
+    await api.delete('/api/open/v1/keys/' + id);
+    await loadApiKeys();
+  };
+
+  const routeTile = (target: Page) => () => props.setPage(target);
+  const showHub = () => setSection('hub');
+
+  if (section === 'integrations') {
+    const visible = integrationCatalog.filter(item => filter === 'Todas' || item.category === filter);
+    return (
+      <section>
+        <SettingsBack title="Integrações" onBack={showHub} subtitle="Conectores, performance, operação e API aberta" />
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+          {['Todas', 'Marketplaces', 'Pagamentos', 'Operação', 'Logística', 'Performance'].map(category => (
+            <button key={category} onClick={() => setFilter(category)} className={'whitespace-nowrap rounded-full border px-4 py-2 text-[10px] font-semibold ' + (filter === category ? 'border-[#159fe5] bg-[#eef8fd] text-[#107db2]' : 'border-[#d9dde0] bg-white text-[#586066]')}>{category}</button>
+          ))}
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+          {visible.map(item => {
+            const Icon = item.icon;
+            const state = integrations.find(integration => integration.id === item.id);
+            return (
+              <button key={item.id} onClick={() => openIntegration(item.id)} className="min-h-[220px] rounded-xl border border-[#e1e4e6] bg-white p-5 text-left shadow-[0_5px_18px_rgba(26,35,40,.035)] transition hover:-translate-y-0.5 hover:border-[#b9dff2] hover:shadow-md">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#eef8fd] text-[#159fe5]"><Icon size={22} /></span>
+                  {state?.status === 'Ativo' && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[8px] font-bold text-emerald-700">● Ativa</span>}
+                </div>
+                <h3 className="mt-4 text-sm font-bold">{item.name}</h3>
+                <p className="mt-2 min-h-[48px] text-[10px] leading-4 text-slate-500">{item.description}</p>
+                <div className="mt-4 flex items-center justify-between border-t pt-3"><span className="text-[9px] text-slate-400">{state?.status || item.badge}</span><span className="text-[#159fe5]">›</span></div>
+              </button>
+            );
+          })}
+        </div>
+
+        {selectedIntegration && (() => {
+          const spec = integrationCatalog.find(item => item.id === selectedIntegration);
+          if (!spec) return null;
+          const Icon = spec.icon;
+          const state = integrations.find(item => item.id === selectedIntegration);
+          return (
+            <Modal title={'Configurar ' + spec.name} onClose={() => { setSelectedIntegration(null); setIntegrationMessage(''); }}>
+              <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#e5e9eb] bg-[#f8fbfc] p-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f6fc] text-[#159fe5]"><Icon size={20} /></span>
+                <div><b className="text-xs">{spec.name}</b><p className="mt-1 text-[9px] leading-4 text-slate-500">{spec.description}</p><span className="mt-1 inline-block text-[8px] font-semibold text-[#607078]">Status: {state?.status || 'Inativo'}</span></div>
+              </div>
+
+              <div className="space-y-3">
+                {fieldSpec(selectedIntegration).map(field => (
+                  <Field key={field.key} label={field.label}>
+                    <input value={integrationFields[field.key] || ''} onChange={event => setIntegrationFields(current => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} className="control" />
+                  </Field>
+                ))}
+                {fieldSpec(selectedIntegration).length === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] text-emerald-700">Este módulo usa a infraestrutura nativa do sistema e não exige campos adicionais.</div>}
+                {['ifood','99food','keeta','pix-auto','wallet-pay','pos','foody-delivery','meta-capi','zapturbo','boletim'].includes(selectedIntegration) && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[9px] leading-4 text-amber-800">Credenciais, tokens e autorizações oficiais do parceiro não são armazenados neste formulário. O conector só será marcado como ativo depois que a autorização oficial estiver disponível no backend seguro.</div>
+                )}
+                {integrationMessage && <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] text-[#35667d]">{integrationMessage}</div>}
+              </div>
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button onClick={() => void testIntegration()} disabled={integrationBusy} className="flex items-center gap-2 rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold"><RefreshCw size={13} />Testar conexão</button>
+                <button onClick={() => void saveIntegration()} disabled={integrationBusy} className="rounded-xl bg-[#159fe5] px-5 py-3 text-[10px] font-bold text-white">Salvar configuração</button>
+              </div>
+            </Modal>
+          );
+        })()}
+      </section>
+    );
+  }
+
+  if (section === 'open-api') {
+    const origin = window.location.origin;
+    return (
+      <section>
+        <SettingsBack title="API Aberta + Webhooks" onBack={() => setSection('integrations')} subtitle="Integre sistemas externos ao Mesa Restaurant OS" />
+        <div className="grid gap-4 xl:grid-cols-[1fr_.9fr]">
+          <Surface>
+            <SectionHead title="Chaves de API" subtitle="A chave completa é exibida somente no momento da criação." />
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input value={apiKeyName} onChange={event => setApiKeyName(event.target.value)} className="control flex-1" placeholder="Nome da integração" />
+              <button onClick={() => void createApiKey()} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Gerar chave API</button>
+            </div>
+            {newApiKey && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <b className="text-[10px] text-amber-800">Copie agora — esta chave não será exibida novamente.</b>
+                <div className="mt-2 flex gap-2"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 text-[9px]">{newApiKey}</code><button onClick={() => void navigator.clipboard.writeText(newApiKey)} className="rounded-lg bg-[#202538] px-3 text-[9px] font-bold text-white">Copiar</button></div>
+              </div>
+            )}
+            <div className="mt-4 space-y-2">
+              {apiKeys.map(key => <div key={key.id} className="flex items-center gap-3 rounded-xl border border-[#ece9e4] p-3"><KeyRound size={15} className="text-[#159fe5]" /><span className="min-w-0 flex-1"><b className="block text-[10px]">{key.name}</b><small className="text-[8px] text-slate-400">{key.prefix}•••• · criada em {new Date(key.createdAt).toLocaleString('pt-BR')}</small></span><button onClick={() => void revokeApiKey(key.id)} className="text-[9px] font-semibold text-red-500">Revogar</button></div>)}
+              {apiKeys.length === 0 && <p className="text-[10px] text-slate-400">Nenhuma chave criada.</p>}
+            </div>
+          </Surface>
+
+          <Surface>
+            <SectionHead title="Endpoints REST" subtitle="Envie a chave no header x-api-key." />
+            <ApiEndpoint method="GET" path={origin + '/api/open/v1/health'} note="Saúde da API" />
+            <ApiEndpoint method="GET" path={origin + '/api/open/v1/menu'} note="Cardápio ativo" />
+            <ApiEndpoint method="GET" path={origin + '/api/open/v1/tables'} note="Mesas e status" />
+            <ApiEndpoint method="GET" path={origin + '/api/open/v1/orders'} note="Pedidos" />
+            <ApiEndpoint method="POST" path={origin + '/api/open/v1/orders'} note="Criar pedido por integração" />
+            <div className="mt-4 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[9px] leading-4 text-[#35667d]"><b>Webhooks:</b> conectores externos podem enviar pedidos para o endpoint POST de pedidos usando uma chave própria. A API valida os produtos e calcula os valores com o cadastro interno.</div>
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'general') {
+    return (
+      <section>
+        <SettingsBack title="Configuração Geral" onBack={showHub} subtitle="Operação, atendimento e dispositivos" />
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Surface>
+            <SectionHead title="Identidade e regras" subtitle="Dados principais do estabelecimento" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Nome do restaurante"><input value={props.settingsForm.restaurantName} onChange={event => props.setSettingsForm({ ...props.settingsForm, restaurantName: event.target.value })} className="control" /></Field>
+              <Field label="Unidade"><input value={props.settingsForm.unit} onChange={event => props.setSettingsForm({ ...props.settingsForm, unit: event.target.value })} className="control" /></Field>
+              <Field label="Taxa de serviço (%)"><input type="number" min="0" max="30" value={props.settingsForm.serviceFee} onChange={event => props.setSettingsForm({ ...props.settingsForm, serviceFee: Number(event.target.value) })} className="control" /></Field>
+              <Field label="Horário de funcionamento"><input value={props.settingsForm.openingHours} onChange={event => props.setSettingsForm({ ...props.settingsForm, openingHours: event.target.value })} className="control" /></Field>
+              <Field label="Pedido mínimo delivery"><input type="number" value={props.settingsForm.deliveryMinimum} onChange={event => props.setSettingsForm({ ...props.settingsForm, deliveryMinimum: Number(event.target.value) })} className="control" /></Field>
+              <Field label="Frete grátis acima de"><input type="number" value={props.settingsForm.freeDeliveryFrom} onChange={event => props.setSettingsForm({ ...props.settingsForm, freeDeliveryFrom: Number(event.target.value) })} className="control" /></Field>
+            </div>
+            <button onClick={() => void saveGeneral()} className="mt-4 rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar configuração geral</button>
+          </Surface>
+          <Surface>
+            <SectionHead title="Operação" subtitle="Ative os recursos usados na unidade" />
+            <SettingToggle icon={<Percent size={16} />} title="Taxa de serviço automática" subtitle="Calcula a taxa no fechamento." enabled={props.settingsForm.automaticServiceFee} onClick={() => toggle('automaticServiceFee')} />
+            <SettingToggle icon={<QrCode size={16} />} title="Cardápio QR Code" subtitle="Cardápio digital para clientes." enabled={props.settingsForm.qrMenuEnabled} onClick={() => toggle('qrMenuEnabled')} />
+            <SettingToggle icon={<Smartphone size={16} />} title="Modo garçom" subtitle="Atendimento móvel vinculado às mesas." enabled={props.settingsForm.waiterAppEnabled} onClick={() => toggle('waiterAppEnabled')} />
+            <SettingToggle icon={<Store size={16} />} title="Totem" subtitle="Autoatendimento." enabled={props.settingsForm.selfServiceEnabled} onClick={() => toggle('selfServiceEnabled')} />
+            <SettingToggle icon={<ChefHat size={16} />} title="KDS" subtitle="Fila digital de produção." enabled={props.settingsForm.kdsEnabled} onClick={() => toggle('kdsEnabled')} />
+            <SettingToggle icon={<Printer size={16} />} title="Impressão automática" subtitle="Impressão por setor." enabled={props.settingsForm.autoPrint} onClick={() => toggle('autoPrint')} />
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'payments') {
+    return (
+      <section>
+        <SettingsBack title="Formas de Pagamento" onBack={showHub} subtitle="Meios aceitos no fechamento do pedido" />
         <Surface>
-          <SectionHead title="Pagamentos e fiscal" subtitle="Formas de pagamento e emissão" />
-          <SettingToggle icon={<QrCode size={16} />} title="Pix" subtitle="Disponível no fechamento de pedidos." enabled={props.settingsForm.pixEnabled} onClick={() => toggle('pixEnabled')} />
-          <SettingToggle icon={<CreditCard size={16} />} title="Cartão" subtitle="Crédito e débito no fechamento." enabled={props.settingsForm.cardEnabled} onClick={() => toggle('cardEnabled')} />
+          <SettingToggle icon={<QrCode size={16} />} title="Pix" subtitle="Pagamento via Pix." enabled={props.settingsForm.pixEnabled} onClick={() => toggle('pixEnabled')} />
+          <SettingToggle icon={<CreditCard size={16} />} title="Cartão" subtitle="Crédito e débito." enabled={props.settingsForm.cardEnabled} onClick={() => toggle('cardEnabled')} />
           <SettingToggle icon={<Banknote size={16} />} title="Dinheiro" subtitle="Pagamento em espécie." enabled={props.settingsForm.cashEnabled} onClick={() => toggle('cashEnabled')} />
-          <SettingToggle icon={<ReceiptText size={16} />} title="Módulo fiscal" subtitle="Estrutura preparada para NFC-e / NF-e." enabled={props.settingsForm.fiscalEnabled} onClick={() => toggle('fiscalEnabled')} />
+          <SettingToggle icon={<ReceiptText size={16} />} title="Módulo fiscal" subtitle="Estrutura de NFC-e / NF-e." enabled={props.settingsForm.fiscalEnabled} onClick={() => toggle('fiscalEnabled')} />
+          <button onClick={() => void saveGeneral()} className="mt-4 rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar meios de pagamento</button>
         </Surface>
+      </section>
+    );
+  }
 
-        <Surface>
-          <SectionHead title="Produção, impressão e inteligência" subtitle="Diferenciais de operação" />
-          <SettingToggle icon={<ChefHat size={16} />} title="KDS de cozinha" subtitle="Fila digital de produção." enabled={props.settingsForm.kdsEnabled} onClick={() => toggle('kdsEnabled')} />
-          <SettingToggle icon={<Printer size={16} />} title="Impressão automática" subtitle="Preparação para impressoras por setor." enabled={props.settingsForm.autoPrint} onClick={() => toggle('autoPrint')} />
-          <SettingToggle icon={<AlertTriangle size={16} />} title="Alerta inteligente de estoque" subtitle="Sinaliza itens abaixo do mínimo." enabled={props.settingsForm.lowStockAlerts} onClick={() => toggle('lowStockAlerts')} />
-          <SettingToggle icon={<Clock3 size={16} />} title="Alerta de tempo de preparo" subtitle="Destaca pedidos acima do tempo esperado." enabled={props.settingsForm.prepAlerts} onClick={() => toggle('prepAlerts')} />
-          <SettingToggle icon={<Heart size={16} />} title="Fidelidade / CRM" subtitle="Base para recorrência e campanhas." enabled={props.settingsForm.loyaltyEnabled} onClick={() => toggle('loyaltyEnabled')} />
-          <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <IntegrationCard icon={<Plug size={17} />} title="iFood" />
-            <IntegrationCard icon={<ReceiptText size={17} />} title="Contabilidade" />
-            <IntegrationCard icon={<CreditCard size={17} />} title="Smart POS" />
-          </div>
-        </Surface>
+  if (section === 'delivery') {
+    return (
+      <section>
+        <SettingsBack title="Configurações de Delivery" onBack={showHub} subtitle="Área, pedidos e logística" />
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Surface>
+            <SettingToggle icon={<Truck size={16} />} title="Aceite automático" subtitle="Pedidos entram direto na operação." enabled={props.settingsForm.autoAcceptDelivery} onClick={() => toggle('autoAcceptDelivery')} />
+            <Field label="Pedido mínimo"><input type="number" value={props.settingsForm.deliveryMinimum} onChange={event => props.setSettingsForm({ ...props.settingsForm, deliveryMinimum: Number(event.target.value) })} className="control" /></Field>
+            <div className="mt-3"><Field label="Frete grátis acima de"><input type="number" value={props.settingsForm.freeDeliveryFrom} onChange={event => props.setSettingsForm({ ...props.settingsForm, freeDeliveryFrom: Number(event.target.value) })} className="control" /></Field></div>
+            <button onClick={() => void saveGeneral()} className="mt-4 rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar delivery</button>
+          </Surface>
+          <Surface>
+            <SectionHead title="Logística" subtitle="Conectores disponíveis em Integrações" />
+            <AjusteLink icon={<MapPinned size={22} />} title="Área de entrega" subtitle="Regras por região, raio e operação" onClick={() => setSection('integrations')} />
+            <AjusteLink icon={<Bike size={22} />} title="Entregadores" subtitle="App do Entregador e parceiros logísticos" onClick={() => setSection('integrations')} />
+            <AjusteLink icon={<Truck size={22} />} title="Marketplaces" subtitle="iFood, 99Food e Keeta" onClick={() => setSection('integrations')} />
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <div className="mb-5">
+        <h1 className="text-xl font-bold">Ajustes</h1>
+        <p className="mt-1 text-xs text-slate-400">Cadastros, delivery, relatórios, configurações, integrações e API.</p>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e9e5df] bg-[#fffefa] p-4">
-        <div><b className="text-xs">Manutenção da demonstração</b><p className="text-[10px] text-slate-400">Restaura somente os dados de exemplo do ambiente de prévia.</p></div>
-        <button onClick={() => { if (confirm('Restaurar dados de demonstração?')) void props.run(() => api.post('/api/reset', {}), 'Demonstração restaurada.'); }} className="flex items-center gap-2 rounded-lg border px-4 py-3 text-[10px] font-semibold text-slate-500"><RotateCcw size={14} />Restaurar demonstração</button>
+      <div className="mb-5 flex items-center gap-3 rounded-xl border border-[#e5e8ea] bg-[#fffefa] p-4">
+        <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#159fe5] text-white"><Store size={22} /></span>
+        <div className="min-w-0 flex-1"><small className="text-[9px] text-slate-400">Perfil</small><b className="block truncate text-sm">{props.data.settings.restaurantName}</b><span className="text-[9px] text-slate-400">{props.data.settings.unit} · Modo Estabelecimento</span></div>
+        <button onClick={() => setSection('general')} className="rounded-lg border px-3 py-2 text-[9px] font-semibold">Mostrar perfil</button>
       </div>
-    </PageSection>
+
+      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <PromoCard icon={<Plug size={19} />} title="Central de Integrações" subtitle="Marketplaces, pagamentos, logística e performance." action="Configurar" onClick={() => setSection('integrations')} />
+        <PromoCard icon={<KeyRound size={19} />} title="API Aberta" subtitle="Chaves REST para sistemas e automações externas." action="Gerenciar API" onClick={() => setSection('open-api')} />
+        <PromoCard icon={<Store size={19} />} title="Totem e KDS" subtitle="Autoatendimento e produção conectados." action="Ver integrações" onClick={() => setSection('integrations')} />
+        <PromoCard icon={<BrainCircuit size={19} />} title="Assistente IA" subtitle="Ajuda operacional dentro do sistema." action="Já disponível" onClick={() => alert('O Assistente de IA está disponível no canto inferior direito.')} />
+      </div>
+
+      <SettingsGroup title="Cadastros">
+        <AjusteTile icon={<CircleDollarSign size={29} />} title="Pagamentos" onClick={() => setSection('payments')} />
+        <AjusteTile icon={<QrCode size={29} />} title="Cardápio QR Code" onClick={routeTile('menu')} />
+        <AjusteTile icon={<Package size={29} />} title="Produtos" onClick={routeTile('products')} />
+        <AjusteTile icon={<Layers3 size={29} />} title="Categorias" onClick={routeTile('menu')} />
+        <AjusteTile icon={<Users size={29} />} title="Clientes" onClick={routeTile('customers')} />
+        <AjusteTile icon={<CreditCard size={29} />} title="Formas de pagamento" onClick={() => setSection('payments')} />
+        <AjusteTile icon={<Heart size={29} />} title="Fidelidade" onClick={() => setSection('general')} />
+        <AjusteTile icon={<Gift size={29} />} title="Cupons" onClick={() => alert('Cupons ficam vinculados ao módulo de Fidelidade/CRM. A estrutura está preparada para a próxima etapa de regras promocionais.')} />
+        <AjusteTile icon={<Printer size={29} />} title="Categorias de impressão" onClick={() => setSection('general')} />
+        <AjusteTile icon={<UserCog size={29} />} title="Usuários" onClick={() => alert('Perfis de usuário serão vinculados ao controle de acesso do estabelecimento.')} />
+        <AjusteTile icon={<Plug size={29} />} title="Integrações" onClick={() => setSection('integrations')} />
+        <AjusteTile icon={<BadgePercent size={29} />} title="Programa de Cashback" onClick={() => setSection('general')} />
+      </SettingsGroup>
+
+      <SettingsGroup title="Delivery">
+        <AjusteTile icon={<ShoppingBag size={29} />} title="Cardápio Delivery" onClick={routeTile('menu')} />
+        <AjusteTile icon={<MapPinned size={29} />} title="Área de entrega" onClick={() => setSection('delivery')} />
+        <AjusteTile icon={<Bike size={29} />} title="Entregadores" onClick={() => setSection('integrations')} />
+        <AjusteTile icon={<Settings size={29} />} title="Configurações" onClick={() => setSection('delivery')} />
+        <AjusteTile icon={<Truck size={29} />} title="Integrações Delivery" onClick={() => setSection('integrations')} />
+      </SettingsGroup>
+
+      <SettingsGroup title="Relatórios">
+        <AjusteTile icon={<WalletCards size={29} />} title="Caixas" onClick={routeTile('history')} />
+        <AjusteTile icon={<BarChart3 size={29} />} title="Painel" onClick={routeTile('dashboard')} />
+      </SettingsGroup>
+
+      <SettingsGroup title="Configurações">
+        <AjusteTile icon={<Settings size={29} />} title="Geral" onClick={() => setSection('general')} />
+        <AjusteTile icon={<KeyRound size={29} />} title="API Aberta" onClick={() => setSection('open-api')} />
+      </SettingsGroup>
+
+      <SettingsGroup title="Outros">
+        <AjusteTile icon={<ReceiptText size={29} />} title="Meus Pagamentos" onClick={() => setSection('payments')} />
+        <AjusteTile icon={<LogOut size={29} />} title="Sair" onClick={() => alert('Sessão administrativa mantida neste ambiente de demonstração.')} />
+      </SettingsGroup>
+    </section>
   );
+}
+
+function SettingsBack({ title, subtitle, onBack }: { title: string; subtitle: string; onBack: () => void }) {
+  return <div className="mb-5 flex items-center gap-3"><button onClick={onBack} className="grid h-9 w-9 place-items-center rounded-full hover:bg-white">←</button><div><h1 className="text-xl font-bold">{title}</h1><p className="text-[10px] text-slate-400">{subtitle}</p></div></div>;
+}
+
+function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="mb-7"><h2 className="mb-3 text-sm font-bold text-[#26394c]">{title}</h2><div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-10">{children}</div></section>;
+}
+
+function AjusteTile({ icon, title, onClick }: { icon: ReactNode; title: string; onClick: () => void }) {
+  return <button onClick={onClick} className="min-h-[138px] rounded-lg border border-[#dfe3e5] bg-white p-3 text-center shadow-[0_4px_12px_rgba(25,35,42,.04)] transition hover:-translate-y-0.5 hover:border-[#b9dff2]"><span className="mx-auto grid h-16 w-16 place-items-center text-[#159fe5]">{icon}</span><b className="mt-2 block text-[9px] leading-3">{title}</b></button>;
+}
+
+function AjusteLink({ icon, title, subtitle, onClick }: { icon: ReactNode; title: string; subtitle: string; onClick: () => void }) {
+  return <button onClick={onClick} className="flex w-full items-center gap-3 border-t border-[#eeeae4] py-3 text-left first:border-t-0"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef8fd] text-[#159fe5]">{icon}</span><span className="min-w-0 flex-1"><b className="block text-xs">{title}</b><small className="text-[9px] text-slate-400">{subtitle}</small></span><span className="text-[#159fe5]">›</span></button>;
+}
+
+function PromoCard({ icon, title, subtitle, action, onClick }: { icon: ReactNode; title: string; subtitle: string; action: string; onClick: () => void }) {
+  return <button onClick={onClick} className="rounded-xl border border-[#e1e5e7] bg-gradient-to-br from-white to-[#eef8fd] p-4 text-left"><span className="text-[#159fe5]">{icon}</span><b className="mt-3 block text-xs">{title}</b><p className="mt-1 text-[9px] leading-4 text-slate-500">{subtitle}</p><span className="mt-3 inline-block text-[9px] font-bold text-[#159fe5]">{action} ›</span></button>;
+}
+
+function ApiEndpoint({ method, path, note }: { method: string; path: string; note: string }) {
+  return <div className="mb-2 rounded-xl border border-[#ece9e4] p-3"><div className="flex items-center gap-2"><span className={'rounded px-2 py-1 text-[8px] font-bold ' + (method === 'POST' ? 'bg-emerald-50 text-emerald-700' : 'bg-[#eef7fb] text-[#147eaf]')}>{method}</span><code className="min-w-0 flex-1 truncate text-[8px]">{path}</code></div><small className="mt-1 block text-[8px] text-slate-400">{note}</small></div>;
+}
+
+function PageSection({ title, subtitle, action, onAction, children }: { title: string; subtitle: string; action?: string; onAction?: () => void | Promise<void>; children: ReactNode }) {
+  return <section><div className="mb-4 flex items-center justify-between"><div><h1 className="text-lg font-bold">{title}</h1><p className="text-xs text-slate-400">{subtitle}</p></div>{action && <button onClick={() => void onAction?.()} className="flex items-center gap-2 rounded-lg bg-[#f45f3f] px-4 py-2.5 text-[10px] font-bold text-white"><Plus size={14} />{action}</button>}</div>{children}</section>;
+}
+
+function Surface({ children }: { children: ReactNode }) {
+  return <section className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_10px_28px_rgba(46,42,38,0.04)]">{children}</section>;
+}
+
+function DataRow({ children }: { children: ReactNode }) {
+  return <div className="flex min-h-14 items-center gap-3 border-t border-[#f0f0f4] first:border-t-0">{children}</div>;
+}
+
+function SectionHead({ title, subtitle }: { title: string; subtitle: string }) {
+  return <div className="mb-4"><h3 className="text-sm font-bold">{title}</h3><p className="text-[10px] text-slate-400">{subtitle}</p></div>;
+}
+
+function Badge({ value }: { value: string }) {
+  return <span className={'rounded-full px-2 py-1 text-[9px] font-bold ' + badgeClass(value)}>{value}</span>;
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_8px_24px_rgba(46,42,38,0.035)]"><span className="text-[10px] text-slate-400">{label}</span><strong className="mt-2 block text-xl tracking-[-0.02em] text-[#2d2e32]">{value}</strong><span className="mt-1 flex items-center gap-1 text-[9px] text-emerald-600"><ArrowUpRight size={11} />Atualizado agora</span></div>;
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg bg-[#f7f8fa] p-4"><span className="block text-[9px] text-slate-400">{label}</span><b className="mt-1 block text-sm">{value}</b></div>;
+}
+
+function Preference({ icon, title, value }: { icon: ReactNode; title: string; value: string }) {
+  return <div className="flex items-center gap-3 border-t border-[#f0f0f4] py-3 first:border-t-0"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#e85b3a]">{icon}</span><span className="flex-1 text-xs font-semibold">{title}</span><b className="text-[10px] text-emerald-600">{value}</b></div>;
 }
