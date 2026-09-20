@@ -648,6 +648,247 @@ export const handler = router({
     return json(order, 201);
   }],
 
+  'POST /api/qa/run': [async ({ body }) => {
+    const value = body as { scope?: 'quick' | 'operation' | 'integrations' | 'customer' | 'api' | 'full' };
+    const scope = value.scope || 'quick';
+    const allowedScopes = new Set(['quick', 'operation', 'integrations', 'customer', 'api', 'full']);
+    if (!allowedScopes.has(scope)) return error('Escopo de teste inválido', 400);
+
+    const current = await get();
+    const state = current.state;
+    const integrations = await listIntegrationConfigs();
+    const apiKeys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
+
+    type QaStatus = 'pass' | 'warn' | 'fail';
+    type QaCheck = { id: string; module: string; status: QaStatus; title: string; detail: string };
+    const checks: QaCheck[] = [];
+    const add = (id: string, module: string, status: QaStatus, title: string, detail: string) => checks.push({ id, module, status, title, detail });
+    const wants = (...areas: string[]) => scope === 'full' || scope === 'quick' || areas.includes(scope);
+
+    if (wants('operation')) {
+      add(
+        'state-core',
+        'Sistema',
+        state.products.length > 0 && state.tables.length > 0 ? 'pass' : 'fail',
+        'Estrutura operacional carregada',
+        state.products.length > 0 && state.tables.length > 0
+          ? state.products.length + ' produto(s) e ' + state.tables.length + ' mesa(s) disponíveis.'
+          : 'Produtos ou mesas não foram encontrados no estado do sistema.'
+      );
+
+      const invalidOrders = state.orders.filter(order =>
+        !order.id ||
+        !order.createdAt ||
+        !Array.isArray(order.items) ||
+        order.items.length === 0 ||
+        order.total < 0 ||
+        order.items.some(item => !item.productId || item.qty <= 0 || item.price < 0)
+      );
+      add(
+        'orders-integrity',
+        'Pedidos / PDV',
+        invalidOrders.length === 0 ? 'pass' : 'fail',
+        'Integridade dos pedidos',
+        invalidOrders.length === 0
+          ? state.orders.length + ' pedido(s) com estrutura válida.'
+          : invalidOrders.length + ' pedido(s) possuem item, valor ou data inválidos.'
+      );
+
+      const missingProducts = state.orders.flatMap(order => order.items).filter(item => !state.products.some(product => product.id === item.productId));
+      add(
+        'order-products',
+        'Pedidos / Cardápio',
+        missingProducts.length === 0 ? 'pass' : 'warn',
+        'Referência dos produtos nos pedidos',
+        missingProducts.length === 0
+          ? 'Todos os itens dos pedidos possuem produto correspondente.'
+          : missingProducts.length + ' item(ns) históricos apontam para produto que não está mais cadastrado.'
+      );
+
+      const occupiedWithoutOrder = state.tables.filter(table =>
+        table.status !== 'Livre' &&
+        !state.orders.some(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      );
+      add(
+        'tables-consistency',
+        'Mesas',
+        occupiedWithoutOrder.length === 0 ? 'pass' : 'warn',
+        'Consistência das mesas ocupadas',
+        occupiedWithoutOrder.length === 0
+          ? 'Mesas ocupadas possuem operação ativa coerente.'
+          : occupiedWithoutOrder.length + ' mesa(s) estão marcadas como ocupadas sem pedido ativo.'
+      );
+
+      const invalidRequests = state.serviceRequests.filter(request => !state.tables.some(table => table.name === request.table));
+      add(
+        'waiter-alerts',
+        'Atendimento',
+        invalidRequests.length === 0 ? 'pass' : 'fail',
+        'Alertas de garçom e conta',
+        invalidRequests.length === 0
+          ? state.serviceRequests.filter(request => request.status === 'pending').length + ' solicitação(ões) pendente(s), todas ligadas a mesas válidas.'
+          : invalidRequests.length + ' solicitação(ões) apontam para mesa inexistente.'
+      );
+
+      const validCash = ['Aberto', 'Fechado'].includes(state.cashRegister.status) && state.cashRegister.openingAmount >= 0;
+      add(
+        'cash-register',
+        'Caixa',
+        validCash ? 'pass' : 'fail',
+        'Estado do caixa',
+        validCash
+          ? 'Caixa ' + state.cashRegister.status.toLowerCase() + ' com abertura de R$ ' + state.cashRegister.openingAmount.toFixed(2) + '.'
+          : 'O caixa possui status ou valor de abertura inválido.'
+      );
+
+      const invalidKds = state.orders.filter(order => !['Novo', 'Preparando', 'Pronto', 'Entregue', 'Finalizado', 'Cancelado'].includes(order.status));
+      add(
+        'kds-status',
+        'Cozinha / KDS',
+        invalidKds.length === 0 ? 'pass' : 'fail',
+        'Status do KDS',
+        invalidKds.length === 0 ? 'Todos os pedidos usam status reconhecidos pelo KDS.' : invalidKds.length + ' pedido(s) possuem status desconhecido.'
+      );
+
+      const invalidProducts = state.products.filter(product => !product.name.trim() || product.price <= 0 || product.stock < 0);
+      const productsWithoutImage = state.products.filter(product => product.active && !product.imageUrl && !product.imagePath);
+      add(
+        'catalog-products',
+        'Produtos / Cardápio',
+        invalidProducts.length > 0 ? 'fail' : productsWithoutImage.length > 0 ? 'warn' : 'pass',
+        'Cadastro dos produtos',
+        invalidProducts.length > 0
+          ? invalidProducts.length + ' produto(s) possuem nome, preço ou estoque inválido.'
+          : productsWithoutImage.length > 0
+            ? productsWithoutImage.length + ' produto(s) ativo(s) ainda não possuem foto própria/configurada.'
+            : 'Produtos ativos possuem dados principais e imagens configuradas.'
+      );
+
+      const invalidStock = state.stock.filter(item => item.current < 0 || item.minimum < 0 || item.cost < 0);
+      const lowStock = state.stock.filter(item => item.current <= item.minimum);
+      add(
+        'stock-health',
+        'Estoque',
+        invalidStock.length > 0 ? 'fail' : lowStock.length > 0 ? 'warn' : 'pass',
+        'Saúde do estoque',
+        invalidStock.length > 0
+          ? invalidStock.length + ' item(ns) possuem valores negativos.'
+          : lowStock.length > 0
+            ? lowStock.length + ' item(ns) estão no mínimo ou abaixo do mínimo.'
+            : 'Nenhum item está abaixo do estoque mínimo.'
+      );
+
+      const invalidTransactions = state.transactions.filter(tx => tx.amount <= 0 || !['Entrada', 'Saída'].includes(tx.type));
+      add(
+        'finance-integrity',
+        'Financeiro',
+        invalidTransactions.length === 0 ? 'pass' : 'fail',
+        'Movimentações financeiras',
+        invalidTransactions.length === 0
+          ? state.transactions.length + ' movimentação(ões) com tipo e valor válidos.'
+          : invalidTransactions.length + ' movimentação(ões) possuem tipo ou valor inválido.'
+      );
+    }
+
+    if (scope === 'customer' || scope === 'full' || scope === 'quick') {
+      const tableOrdersInvalid = state.orders.filter(order => order.table && !state.tables.some(table => table.name === order.table));
+      const customerRequestsInvalid = state.serviceRequests.filter(request => !state.tables.some(table => table.name === request.table));
+      add(
+        'customer-table-links',
+        'Modo Cliente',
+        tableOrdersInvalid.length === 0 && customerRequestsInvalid.length === 0 ? 'pass' : 'fail',
+        'Vínculo cliente ↔ mesa',
+        tableOrdersInvalid.length === 0 && customerRequestsInvalid.length === 0
+          ? 'Pedidos e solicitações do cliente apontam para mesas válidas.'
+          : 'Foram encontrados pedidos ou solicitações vinculados a mesas inexistentes.'
+      );
+
+      const activeTableOrders = state.orders.filter(order => order.table && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status));
+      add(
+        'customer-status-flow',
+        'Modo Cliente',
+        'pass',
+        'Acompanhamento de pedidos',
+        activeTableOrders.length + ' pedido(s) de mesa podem ser acompanhados pelo portal do cliente.'
+      );
+    }
+
+    if (scope === 'integrations' || scope === 'full' || scope === 'quick') {
+      const configured = integrations.filter(item => item.status !== 'Inativo');
+      const errors = integrations.filter(item => item.status === 'Erro');
+      const pending = integrations.filter(item => item.status === 'Aguardando credenciais');
+
+      add(
+        'integration-config',
+        'Integrações',
+        errors.length > 0 ? 'fail' : configured.length > 0 ? 'pass' : 'warn',
+        'Configurações de integrações',
+        errors.length > 0
+          ? errors.length + ' integração(ões) estão com erro de configuração.'
+          : configured.length > 0
+            ? configured.length + ' integração(ões) possuem configuração registrada.'
+            : 'Nenhuma integração adicional foi configurada ainda.'
+      );
+
+      add(
+        'integration-credentials',
+        'Integrações',
+        pending.length > 0 ? 'warn' : 'pass',
+        'Credenciais de parceiros',
+        pending.length > 0
+          ? pending.length + ' conector(es) aguardam credenciais/autorização oficial do provedor.'
+          : 'Nenhum conector está pendente por credencial oficial.'
+      );
+
+      const kds = integrations.find(item => item.id === 'kds');
+      const totem = integrations.find(item => item.id === 'totem');
+      add(
+        'native-modules',
+        'Integrações Nativas',
+        state.settings.kdsEnabled ? 'pass' : 'warn',
+        'KDS e Totem',
+        'KDS: ' + (state.settings.kdsEnabled ? 'ativo' : 'inativo') + ' · Totem: ' + (state.settings.selfServiceEnabled ? 'ativo' : 'inativo') + '. Configs: ' + (kds?.status || 'Inativo') + ' / ' + (totem?.status || 'Inativo') + '.'
+      );
+    }
+
+    if (scope === 'api' || scope === 'full' || scope === 'quick') {
+      const activeKeys = apiKeys.items.filter(item => item.active);
+      add(
+        'open-api-keys',
+        'API Aberta',
+        activeKeys.length > 0 ? 'pass' : 'warn',
+        'Chaves da API',
+        activeKeys.length > 0
+          ? activeKeys.length + ' chave(s) ativa(s) para integração externa.'
+          : 'Nenhuma chave ativa. A API aberta está implementada, mas precisa de uma chave para acesso protegido.'
+      );
+
+      const openApiIntegration = integrations.find(item => item.id === 'open-api');
+      add(
+        'open-api-config',
+        'API Aberta',
+        activeKeys.length > 0 && openApiIntegration?.status === 'Ativo' ? 'pass' : 'warn',
+        'Estado da API aberta',
+        activeKeys.length > 0 && openApiIntegration?.status === 'Ativo'
+          ? 'API aberta marcada como ativa e com credencial disponível.'
+          : 'Gere uma chave em Ajustes > API Aberta e teste o conector para concluir a ativação.'
+      );
+    }
+
+    const summary = checks.reduce((acc, check) => {
+      acc[check.status] += 1;
+      acc.total += 1;
+      return acc;
+    }, { pass: 0, warn: 0, fail: 0, total: 0 });
+
+    return json({
+      scope,
+      generatedAt: new Date().toISOString(),
+      summary,
+      checks,
+    });
+  }],
+
   'POST /api/assistant': [async ({ body }) => {
     const value = body as {
       mode?: 'establishment' | 'customer';

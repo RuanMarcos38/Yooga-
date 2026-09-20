@@ -1,95 +1,104 @@
 [
   {
-    "name": "Ajustes abre Central de Integrações e salva Google Analytics",
+    "name": "Assistente executa Teste rápido sem alterar dados",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "novo hub de Ajustes",
-      "catálogo de integrações",
-      "PUT /api/integrations/:id",
-      "POST /api/integrations/:id/test",
-      "Google Analytics"
+      "Assistente IA modo Testar Sistema",
+      "POST /api/qa/run",
+      "diagnóstico somente leitura",
+      "resumo aprovado atenção erro"
     ],
-    "description": "Valida o novo fluxo principal de configurações e uma integração configurável sem credencial secreta.",
+    "description": "Valida o novo modo QA dentro do Assistente IA e garante um resultado visível sem modificar a operação.",
     "steps": [
-      "Abrir Configurações/Ajustes",
-      "Abrir Central de Integrações",
-      "Selecionar Google Analytics",
-      "Informar G-TEST12345 e salvar",
-      "Clicar em Testar conexão"
+      "Abrir o Assistente IA no sistema administrativo",
+      "Selecionar Testar Sistema",
+      "Clicar em Teste rápido",
+      "Observar os cards Aprovado, Atenção e Erro e a lista de verificações"
     ],
-    "expected": "A integração fica salva e o sistema retorna uma validação do ID configurado."
+    "expected": "O painel mostra um relatório de diagnóstico com contagens e verificações por módulo, informando que o teste é somente leitura."
   },
   {
-    "name": "iFood permanece aguardando autorização oficial",
+    "name": "Teste completo cobre operação integrações cliente e API",
     "viewport": "desktop",
     "covers": [
-      "integração iFood",
-      "status Aguardando credenciais",
-      "guardrail de integração externa"
+      "POST /api/qa/run escopo full",
+      "Pedidos / PDV",
+      "Mesas",
+      "Caixa",
+      "KDS",
+      "Produtos/Cardápio",
+      "Estoque",
+      "Financeiro",
+      "Modo Cliente",
+      "Integrações",
+      "API Aberta"
     ],
-    "description": "Garante que o sistema não simula uma conexão externa sem autorização oficial.",
+    "description": "Valida que o diagnóstico completo percorre os principais módulos existentes do SaaS.",
     "steps": [
-      "Abrir Ajustes > Integrações > iFood",
-      "Informar IDs de loja e merchant",
-      "Salvar configuração",
-      "Clicar em Testar conexão"
+      "Abrir Assistente IA > Testar Sistema",
+      "Clicar em Teste completo",
+      "Rolar a lista de resultados"
     ],
-    "expected": "O conector informa que a configuração local foi validada, mas permanece Aguardando credenciais/autorização oficial."
+    "expected": "O relatório inclui verificações identificadas por módulo para operação, cliente, integrações e API aberta."
   },
   {
-    "name": "Gerar chave e usar API aberta para cardápio",
+    "name": "Teste de Integrações reporta pendências sem marcar conexão falsa",
     "viewport": "desktop",
     "covers": [
-      "API Aberta",
-      "POST /api/open/v1/keys",
-      "GET /api/open/v1/keys",
-      "GET /api/open/v1/menu",
-      "proteção por x-api-key"
+      "POST /api/qa/run escopo integrations",
+      "integrações externas",
+      "credenciais oficiais",
+      "guardrail contra falso positivo"
     ],
-    "description": "Valida criação de credencial da API própria e disponibilidade do endpoint de cardápio protegido.",
+    "description": "Garante que conectores aguardando autorização externa aparecem como atenção e não como ativos falsos.",
     "steps": [
-      "Abrir Ajustes > API Aberta",
-      "Gerar uma chave chamada QA API",
-      "Confirmar que a chave completa é exibida uma única vez",
-      "Confirmar que a lista mostra a nova chave pelo prefixo"
+      "Abrir Assistente IA > Testar Sistema",
+      "Clicar em Integrações"
     ],
-    "expected": "A nova chave aparece na lista e a documentação visível indica o endpoint GET /api/open/v1/menu protegido por x-api-key."
+    "expected": "O relatório diferencia configuração registrada, erros e conectores que aguardam credenciais oficiais."
   },
   {
-    "name": "Revogar chave da API aberta",
-    "viewport": "desktop",
-    "covers": [
-      "DELETE /api/open/v1/keys/:id",
-      "revogação de acesso",
-      "gestão de chaves"
-    ],
-    "description": "Valida o controle administrativo de credenciais da API aberta.",
-    "setup": [
-      "Criar uma chave chamada Chave Revogar usando Ajustes > API Aberta"
-    ],
-    "steps": [
-      "Na lista de chaves localizar Chave Revogar",
-      "Clicar em Revogar e confirmar"
-    ],
-    "expected": "A chave deixa de aparecer entre as chaves ativas."
-  },
-  {
-    "name": "Ajustes e integrações permanecem utilizáveis no mobile",
+    "name": "Teste do Modo Cliente valida vínculos de mesa",
     "viewport": "mobile",
     "covers": [
-      "hub de Ajustes responsivo",
-      "cards de Cadastros/Delivery/Relatórios",
-      "catálogo de integrações responsivo",
-      "módulos existentes preservados"
+      "POST /api/qa/run escopo customer",
+      "Modo Cliente",
+      "pedidos de mesa",
+      "solicitações de garçom/conta",
+      "responsividade"
     ],
-    "description": "Verifica a experiência móvel sem alterar a navegação existente do SaaS.",
+    "description": "Valida no mobile o diagnóstico dos vínculos usados pela interface do cliente.",
     "steps": [
-      "Abrir Ajustes em viewport mobile",
-      "Rolar por Cadastros, Delivery, Relatórios e Configurações",
-      "Abrir Integrações",
-      "Filtrar por Performance"
+      "Abrir o sistema administrativo em viewport mobile",
+      "Abrir Assistente IA > Testar Sistema",
+      "Clicar em Modo Cliente"
     ],
-    "expected": "Os cards reorganizam-se no mobile e as integrações de performance continuam acessíveis sem quebrar o layout."
+    "expected": "O painel mostra as verificações do vínculo cliente-mesa e acompanhamento de pedidos sem alterar os dados."
+  },
+  {
+    "name": "Falha do endpoint de QA não bloqueia o sistema",
+    "viewport": "desktop",
+    "covers": [
+      "tratamento de falha do POST /api/qa/run",
+      "continuidade do Assistente IA",
+      "continuidade dos módulos existentes"
+    ],
+    "description": "Valida o comportamento seguro quando o diagnóstico estiver temporariamente indisponível.",
+    "qa_faults": [
+      {
+        "method": "POST",
+        "path": "/api/qa/run",
+        "status": 503,
+        "body_json": {
+          "error": "QA temporariamente indisponível"
+        }
+      }
+    ],
+    "steps": [
+      "Abrir Assistente IA > Testar Sistema",
+      "Clicar em Teste rápido"
+    ],
+    "expected": "O painel mostra uma verificação de erro do próprio diagnóstico e o restante do sistema continua utilizável."
   }
 ]

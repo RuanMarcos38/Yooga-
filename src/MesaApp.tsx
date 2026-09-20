@@ -1374,16 +1374,36 @@ type AssistantMessage = {
   content: string;
 };
 
+type QaStatus = 'pass' | 'warn' | 'fail';
+
+type QaCheck = {
+  id: string;
+  module: string;
+  status: QaStatus;
+  title: string;
+  detail: string;
+};
+
+type QaReport = {
+  scope: string;
+  generatedAt: string;
+  summary: { pass: number; warn: number; fail: number; total: number };
+  checks: QaCheck[];
+};
+
 function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'; page?: Page; table?: string }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [qaMode, setQaMode] = useState(false);
+  const [qaRunning, setQaRunning] = useState(false);
+  const [qaReport, setQaReport] = useState<QaReport | null>(null);
   const [messages, setMessages] = useState<AssistantMessage[]>([
     {
       role: 'assistant',
       content: mode === 'customer'
         ? 'Olá! Posso ajudar com seu pedido, status da mesa, notificações, chamar o garçom ou solicitar a conta.'
-        : 'Olá! Sou o assistente do sistema. Posso orientar sobre Dashboard, PDV, Mesas, Caixa, KDS, Cardápio, Estoque, Financeiro, CRM e demais módulos.',
+        : 'Olá! Sou o assistente do sistema. Posso orientar sobre os módulos e também executar testes de diagnóstico no modo Testar Sistema.',
     },
   ]);
 
@@ -1429,54 +1449,125 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
     }
   };
 
+  const runQa = async (scope: 'quick' | 'operation' | 'integrations' | 'customer' | 'api' | 'full') => {
+    if (qaRunning) return;
+    setQaRunning(true);
+    try {
+      const response = await api.post('/api/qa/run', { scope });
+      setQaReport(response.data as QaReport);
+    } catch {
+      setQaReport({
+        scope,
+        generatedAt: new Date().toISOString(),
+        summary: { pass: 0, warn: 0, fail: 1, total: 1 },
+        checks: [{
+          id: 'qa-endpoint',
+          module: 'Testes/QA',
+          status: 'fail',
+          title: 'Não foi possível executar o diagnóstico',
+          detail: 'O endpoint de testes não respondeu. O sistema operacional não foi alterado.',
+        }],
+      });
+    } finally {
+      setQaRunning(false);
+    }
+  };
+
   return (
     <>
       {open && (
-        <section className="fixed bottom-[78px] right-3 z-[75] flex max-h-[min(540px,calc(100vh-105px))] w-[min(370px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-[#e6e2dc] bg-[#fffefa] shadow-[0_22px_65px_rgba(38,35,32,.22)] sm:right-4">
+        <section className="fixed bottom-[78px] right-3 z-[75] flex max-h-[min(590px,calc(100vh-105px))] w-[min(390px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-[#e6e2dc] bg-[#fffefa] shadow-[0_22px_65px_rgba(38,35,32,.22)] sm:right-4">
           <header className="flex items-center gap-3 border-b border-[#eeeae4] bg-white px-4 py-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#fff0eb] text-[#e85b3a]"><BrainCircuit size={18} /></span>
             <div className="min-w-0 flex-1">
               <b className="block text-xs">Assistente de IA</b>
-              <small className="block truncate text-[9px] text-slate-400">{mode === 'customer' ? 'Ajuda ao cliente · acesso limitado' : 'Ajuda operacional · estabelecimento'}</small>
+              <small className="block truncate text-[9px] text-slate-400">{mode === 'customer' ? 'Ajuda ao cliente · acesso limitado' : qaMode ? 'Modo Testes / QA · somente leitura' : 'Ajuda operacional · estabelecimento'}</small>
             </div>
             <button aria-label="Fechar assistente" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X size={16} /></button>
           </header>
 
-          <div className="flex-1 space-y-3 overflow-y-auto p-3">
-            {messages.map((message, index) => (
-              <div key={index} className={'flex ' + (message.role === 'user' ? 'justify-end' : 'justify-start')}>
-                <div className={'max-w-[88%] rounded-2xl px-3 py-2 text-[10px] leading-4 ' + (message.role === 'user' ? 'rounded-br-md bg-[#f45f3f] text-white' : 'rounded-bl-md border border-[#ece8e2] bg-white text-[#454a4d]')}>
-                  {message.content}
-                </div>
-              </div>
-            ))}
-            {sending && <div className="w-fit rounded-2xl rounded-bl-md border border-[#ece8e2] bg-white px-3 py-2 text-[10px] text-slate-400">Pensando...</div>}
-          </div>
-
-          {messages.length <= 2 && (
-            <div className="flex gap-1.5 overflow-x-auto border-t border-[#f1eee9] px-3 py-2">
-              {quickQuestions.map(question => (
-                <button key={question} disabled={sending} onClick={() => void ask(question)} className="whitespace-nowrap rounded-full border border-[#e8e3dd] bg-white px-2.5 py-1.5 text-[8px] font-semibold text-[#5c6266] hover:border-[#f0a08d] hover:text-[#dc5739]">{question}</button>
-              ))}
+          {mode === 'establishment' && (
+            <div className="grid grid-cols-2 gap-1 border-b border-[#eeeae4] bg-white p-2">
+              <button onClick={() => setQaMode(false)} className={'rounded-lg py-2 text-[9px] font-bold ' + (!qaMode ? 'bg-[#202538] text-white' : 'text-slate-500 hover:bg-slate-50')}>Ajuda IA</button>
+              <button onClick={() => setQaMode(true)} className={'flex items-center justify-center gap-1 rounded-lg py-2 text-[9px] font-bold ' + (qaMode ? 'bg-[#f45f3f] text-white' : 'text-slate-500 hover:bg-slate-50')}><ShieldCheck size={13} />Testar Sistema</button>
             </div>
           )}
 
-          <div className="flex items-end gap-2 border-t border-[#eeeae4] bg-white p-3">
-            <textarea
-              value={input}
-              onChange={event => setInput(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  void ask();
-                }
-              }}
-              rows={1}
-              placeholder={mode === 'customer' ? 'Dúvida sobre seu pedido...' : 'Como posso usar o sistema?'}
-              className="max-h-24 min-h-10 flex-1 resize-none rounded-xl border border-[#dfdcd6] bg-[#faf9f7] px-3 py-2.5 text-[10px] outline-none focus:border-[#e99b88]"
-            />
-            <button aria-label="Enviar mensagem" disabled={!input.trim() || sending} onClick={() => void ask()} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f45f3f] text-white disabled:opacity-40"><Send size={15} /></button>
-          </div>
+          {!qaMode || mode === 'customer' ? (
+            <>
+              <div className="flex-1 space-y-3 overflow-y-auto p-3">
+                {messages.map((message, index) => (
+                  <div key={index} className={'flex ' + (message.role === 'user' ? 'justify-end' : 'justify-start')}>
+                    <div className={'max-w-[88%] rounded-2xl px-3 py-2 text-[10px] leading-4 ' + (message.role === 'user' ? 'rounded-br-md bg-[#f45f3f] text-white' : 'rounded-bl-md border border-[#ece8e2] bg-white text-[#454a4d]')}>
+                      {message.content}
+                    </div>
+                  </div>
+                ))}
+                {sending && <div className="w-fit rounded-2xl rounded-bl-md border border-[#ece8e2] bg-white px-3 py-2 text-[10px] text-slate-400">Pensando...</div>}
+              </div>
+
+              {messages.length <= 2 && (
+                <div className="flex gap-1.5 overflow-x-auto border-t border-[#f1eee9] px-3 py-2">
+                  {quickQuestions.map(question => (
+                    <button key={question} disabled={sending} onClick={() => void ask(question)} className="whitespace-nowrap rounded-full border border-[#e8e3dd] bg-white px-2.5 py-1.5 text-[8px] font-semibold text-[#5c6266] hover:border-[#f0a08d] hover:text-[#dc5739]">{question}</button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-end gap-2 border-t border-[#eeeae4] bg-white p-3">
+                <textarea
+                  value={input}
+                  onChange={event => setInput(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      void ask();
+                    }
+                  }}
+                  rows={1}
+                  placeholder={mode === 'customer' ? 'Dúvida sobre seu pedido...' : 'Como posso usar o sistema?'}
+                  className="max-h-24 min-h-10 flex-1 resize-none rounded-xl border border-[#dfdcd6] bg-[#faf9f7] px-3 py-2.5 text-[10px] outline-none focus:border-[#e99b88]"
+                />
+                <button aria-label="Enviar mensagem" disabled={!input.trim() || sending} onClick={() => void ask()} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f45f3f] text-white disabled:opacity-40"><Send size={15} /></button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="border-b border-[#eeeae4] bg-[#fffdf9] p-3">
+                <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[9px] leading-4 text-[#35667d]">
+                  <b>Diagnóstico seguro:</b> os testes são somente leitura. Nenhum pedido, caixa, estoque, cliente ou configuração é alterado.
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  <button onClick={() => void runQa('quick')} disabled={qaRunning} className="rounded-lg border bg-white px-2 py-2 text-[8px] font-bold">Teste rápido</button>
+                  <button onClick={() => void runQa('operation')} disabled={qaRunning} className="rounded-lg border bg-white px-2 py-2 text-[8px] font-bold">Operação</button>
+                  <button onClick={() => void runQa('integrations')} disabled={qaRunning} className="rounded-lg border bg-white px-2 py-2 text-[8px] font-bold">Integrações</button>
+                  <button onClick={() => void runQa('customer')} disabled={qaRunning} className="rounded-lg border bg-white px-2 py-2 text-[8px] font-bold">Modo Cliente</button>
+                  <button onClick={() => void runQa('api')} disabled={qaRunning} className="rounded-lg border bg-white px-2 py-2 text-[8px] font-bold">API Aberta</button>
+                  <button onClick={() => void runQa('full')} disabled={qaRunning} className="rounded-lg bg-[#202538] px-2 py-2 text-[8px] font-bold text-white">Teste completo</button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3">
+                {qaRunning && <div className="grid min-h-40 place-items-center text-center"><div><RefreshCw size={20} className="mx-auto animate-spin text-[#f45f3f]" /><b className="mt-2 block text-xs">Executando diagnóstico...</b><small className="text-[9px] text-slate-400">Verificando os módulos sem alterar os dados.</small></div></div>}
+
+                {!qaRunning && !qaReport && <div className="grid min-h-44 place-items-center text-center"><div><ShieldCheck size={28} className="mx-auto text-emerald-500" /><b className="mt-2 block text-xs">Pronto para testar</b><p className="mt-1 max-w-[280px] text-[9px] leading-4 text-slate-400">Escolha uma área ou execute o Teste completo para verificar toda a operação.</p></div></div>}
+
+                {!qaRunning && qaReport && (
+                  <div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <QaSummaryCard label="Aprovado" value={qaReport.summary.pass} status="pass" />
+                      <QaSummaryCard label="Atenção" value={qaReport.summary.warn} status="warn" />
+                      <QaSummaryCard label="Erro" value={qaReport.summary.fail} status="fail" />
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {qaReport.checks.map(check => <QaCheckCard key={check.id} check={check} />)}
+                    </div>
+                    <p className="mt-3 text-center text-[8px] text-slate-400">Diagnóstico: {new Date(qaReport.generatedAt).toLocaleString('pt-BR')} · {qaReport.summary.total} verificação(ões)</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </section>
       )}
 
@@ -1486,10 +1577,25 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
         className="fixed bottom-4 right-3 z-[76] flex h-12 items-center gap-2 rounded-full bg-[#202538] px-3.5 text-white shadow-[0_12px_30px_rgba(32,37,56,.28)] transition hover:-translate-y-0.5 sm:right-4"
       >
         <span className="grid h-7 w-7 place-items-center rounded-full bg-[#f45f3f]"><BrainCircuit size={15} /></span>
-        <span className="hidden pr-1 text-[9px] font-bold sm:block">Assistente IA</span>
+        <span className="hidden pr-1 text-[9px] font-bold sm:block">{mode === 'establishment' ? 'Assistente IA / Testes' : 'Assistente IA'}</span>
       </button>
     </>
   );
+}
+
+function QaSummaryCard({ label, value, status }: { label: string; value: number; status: QaStatus }) {
+  const theme = status === 'pass' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : status === 'warn' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-red-200 bg-red-50 text-red-700';
+  return <div className={'rounded-xl border p-2 text-center ' + theme}><b className="block text-lg">{value}</b><small className="text-[8px] font-semibold">{label}</small></div>;
+}
+
+function QaCheckCard({ check }: { check: QaCheck }) {
+  const theme = check.status === 'pass'
+    ? { box: 'border-emerald-100 bg-emerald-50/60', icon: 'bg-emerald-100 text-emerald-700', symbol: '✓' }
+    : check.status === 'warn'
+      ? { box: 'border-amber-100 bg-amber-50/60', icon: 'bg-amber-100 text-amber-700', symbol: '!' }
+      : { box: 'border-red-100 bg-red-50/60', icon: 'bg-red-100 text-red-700', symbol: '×' };
+
+  return <div className={'rounded-xl border p-3 ' + theme.box}><div className="flex items-start gap-2"><span className={'grid h-6 w-6 shrink-0 place-items-center rounded-full text-[10px] font-black ' + theme.icon}>{theme.symbol}</span><span className="min-w-0 flex-1"><small className="block text-[8px] font-bold uppercase tracking-wide text-slate-400">{check.module}</small><b className="mt-0.5 block text-[10px]">{check.title}</b><p className="mt-1 text-[9px] leading-4 text-slate-500">{check.detail}</p></span></div></div>;
 }
 
 function PayButton({ label, icon, active, onClick }: { label: string; icon: ReactNode; active: boolean; onClick: () => void }) {
@@ -1891,8 +1997,7 @@ function FinanceView(props: ViewProps) {
     if (!description) return;
     const type = confirm('OK para ENTRADA. Cancelar para SAÍDA.') ? 'Entrada' : 'Saída';
     const amount = Number(prompt('Valor') || 0);
-    if (amount <= 0) return;
-    await props.run(() => api.post('/api/transactions', { description, type, amount, category: type === 'Entrada' ? 'Receitas' : 'Despesas' }), 'Lançamento financeiro criado.');
+    if (amount <= 0) return;    await props.run(() => api.post('/api/transactions', { description, type, amount, category: type === 'Entrada' ? 'Receitas' : 'Despesas' }), 'Lançamento financeiro criado.');
   };
   return (
     <PageSection title="Financeiro" subtitle="Fluxo de caixa e movimentações" action="Novo lançamento" onAction={create}>
@@ -1997,7 +2102,8 @@ function SettingsView(props: ViewProps) {
 
   const saveGeneral = async () => {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
-    await props.run(() => api.put('/api/settings', props.settingsForm), 'Configurações salvas.');  };
+    await props.run(() => api.put('/api/settings', props.settingsForm), 'Configurações salvas.');
+  };
 
   const toggle = (key: keyof AppSettings) => {
     const current = props.settingsForm[key];
