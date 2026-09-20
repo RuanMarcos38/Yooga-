@@ -819,6 +819,14 @@ function ProductEditor({ product, categories, run, onClose }: { product: Product
     imageUrl: product?.imageUrl || '',
   });
   const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState(product?.imageUrl || '');
+
+  const selectPhoto = (selected: File | null) => {
+    if (!selected) return;
+    if (!selected.type.startsWith('image/')) return;
+    setFile(selected);
+    setPreview(URL.createObjectURL(selected));
+  };
 
   const toggleChannel = (channel: string) => {
     setForm(current => ({ ...current, channels: current.channels.includes(channel) ? current.channels.filter(item => item !== channel) : [...current.channels, channel] }));
@@ -868,9 +876,22 @@ function ProductEditor({ product, categories, run, onClose }: { product: Product
         <Field label="Estoque"><input type="number" value={form.stock} onChange={event => setForm({ ...form, stock: Number(event.target.value) })} className="control" /></Field>
         <Field label="Código PDV / SKU"><input value={form.code} onChange={event => setForm({ ...form, code: event.target.value })} className="control" /></Field>
         <Field label="Tempo de preparo (min)"><input type="number" value={form.prepTime} onChange={event => setForm({ ...form, prepTime: Number(event.target.value) })} className="control" /></Field>
-        <Field label="Imagem por URL"><input value={form.imageUrl} onChange={event => setForm({ ...form, imageUrl: event.target.value })} placeholder="https://..." className="control" /></Field>
+        <Field label="Imagem por URL (opcional)"><input value={form.imageUrl} onChange={event => { setForm({ ...form, imageUrl: event.target.value }); if (!file) setPreview(event.target.value); }} placeholder="https://..." className="control" /></Field>
         <Field label="Descrição"><textarea value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} className="control min-h-20" /></Field>
-        <Field label="Imagem do produto"><label className="flex min-h-20 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed text-xs text-slate-500"><ImagePlus size={18} />{file ? file.name : 'Selecionar foto'}<input type="file" accept="image/*" className="hidden" onChange={event => setFile(event.target.files?.[0] || null)} /></label></Field>
+        <Field label="Foto do produto">
+          <div className="grid min-h-[118px] gap-2 rounded-xl border border-[#e4e1dc] bg-[#faf9f6] p-2 sm:grid-cols-[118px_1fr]">
+            <div className="grid h-[102px] overflow-hidden rounded-lg border border-[#e8e4de] bg-white place-items-center">
+              {preview ? <img src={preview} alt="Pré-visualização do produto" className="h-full w-full object-cover natural-photo" /> : <div className="text-center text-slate-400"><ImagePlus size={24} className="mx-auto" /><span className="mt-1 block text-[9px]">Sem foto</span></div>}
+            </div>
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#d6d2cb] bg-white px-3 py-3 text-center">
+              <ImagePlus size={19} className="mb-1 text-[#e45d3e]" />
+              <b className="text-[10px] text-[#43484c]">{file ? 'Trocar foto selecionada' : product?.imageUrl ? 'Trocar foto do produto' : 'Escolher foto do produto'}</b>
+              <span className="mt-1 max-w-[210px] text-[9px] leading-4 text-slate-400">Selecione uma imagem JPG, PNG ou WebP. A foto será otimizada automaticamente antes de salvar.</span>
+              {file && <span className="mt-1 max-w-[220px] truncate text-[9px] font-semibold text-emerald-600">{file.name}</span>}
+              <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={event => selectPhoto(event.target.files?.[0] || null)} />
+            </label>
+          </div>
+        </Field>
         <Field label="Complementos"><textarea value={form.addonsText} onChange={event => setForm({ ...form, addonsText: event.target.value })} placeholder="Bacon, Queijo extra, Molho..." className="control min-h-20" /></Field>
         <Field label="Ficha técnica / insumos"><textarea value={form.ingredientsText} onChange={event => setForm({ ...form, ingredientsText: event.target.value })} placeholder="Pão 1 un, Carne 160g..." className="control min-h-20" /></Field>
       </div>
@@ -1113,26 +1134,49 @@ function DeliveryView(props: ViewProps) {
 }
 
 function ProductsView(props: ViewProps) {
-  const create = async () => {
-    const name = prompt('Nome do produto');
-    if (!name) return;
-    const price = Number(prompt('Preço') || 0);
-    const category = prompt('Categoria') || 'Outros';
-    if (price <= 0) return;
-    await props.run(() => api.post('/api/products', { name, category, price, stock: 10 }), 'Produto cadastrado.');
+  const [productOpen, setProductOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const categories = [...props.data.menuCategories].sort((a, b) => a.order - b.order);
+
+  const openNewProduct = () => {
+    setEditingProduct(null);
+    setProductOpen(true);
   };
+
+  const openEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setProductOpen(true);
+  };
+
   return (
-    <PageSection title="Produtos" subtitle="Catálogo comercial do restaurante" action="Novo produto" onAction={create}>
+    <PageSection title="Produtos" subtitle="Catálogo comercial do restaurante" action="Novo produto" onAction={openNewProduct}>
       <Surface>
+        <div className="mb-3 flex items-center justify-between gap-3 border-b border-[#f0f0f4] pb-3">
+          <div>
+            <b className="block text-xs">Produtos cadastrados</b>
+            <small className="text-[10px] text-slate-400">Cadastre o produto com foto, preço, estoque e demais informações do cardápio.</small>
+          </div>
+          <span className="hidden items-center gap-1 rounded-full bg-[#fff2ee] px-3 py-1.5 text-[9px] font-semibold text-[#df5536] sm:flex"><ImagePlus size={13} />Upload de foto disponível</span>
+        </div>
+
         {props.data.products.filter(product => !props.search || product.name.toLowerCase().includes(props.search.toLowerCase())).map(product => (
           <DataRow key={product.id}>
-            <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-[#eeeae4]"><img src={productPhoto(product)} alt={product.name} loading="lazy" className="h-full w-full object-cover natural-photo" /></span>
-            <span className="flex-1"><b className="block text-xs">{product.name}</b><small className="text-[10px] text-slate-400">{product.category}</small></span>
-            <span className="text-[10px] text-slate-500">{product.stock} un</span><b className="text-xs text-[#ef5a38]">{BRL(product.price)}</b>
+            <button onClick={() => openEditProduct(product)} className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-[#ece9e4] bg-[#eeeae4]">
+              <img src={productPhoto(product)} alt={product.name} loading="lazy" className="h-full w-full object-cover natural-photo" />
+            </button>
+            <button onClick={() => openEditProduct(product)} className="min-w-0 flex-1 text-left">
+              <b className="block truncate text-xs">{product.name}</b>
+              <small className="block truncate text-[10px] text-slate-400">{product.category}{product.imagePath ? ' · Foto própria' : product.imageUrl ? ' · Foto configurada' : ''}</small>
+            </button>
+            <span className="hidden text-[10px] text-slate-500 sm:inline">{product.stock} un</span>
+            <b className="text-xs text-[#ef5a38]">{BRL(product.price)}</b>
+            <button onClick={() => openEditProduct(product)} className="rounded-lg border border-[#e7e4df] px-3 py-2 text-[9px] font-semibold text-[#555d62]">Editar</button>
             <button onClick={() => { if (confirm('Excluir ' + product.name + '?')) void props.run(() => api.delete('/api/products/' + product.id), 'Produto excluído.'); }} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
           </DataRow>
         ))}
       </Surface>
+
+      {productOpen && <ProductEditor product={editingProduct} categories={categories} run={props.run} onClose={() => setProductOpen(false)} />}
     </PageSection>
   );
 }

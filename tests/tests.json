@@ -1,7 +1,29 @@
 [
   {
-    "name": "Abrir uma mesa, lançar produto e salvar pedido",
+    "name": "Cadastrar produto com foto pela tela Produtos",
     "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "Produtos",
+      "cadastro completo de produto",
+      "seleção e pré-visualização de foto",
+      "API POST /api/products",
+      "API POST /api/products/:id/image",
+      "storage de imagem do produto",
+      "persistência da foto"
+    ],
+    "description": "Valida que o botão Novo produto da tela Produtos abre o cadastro completo e permite vincular uma foto real ao item sem alterar o restante do sistema.",
+    "steps": [
+      "Abrir Produtos e clicar em Novo produto",
+      "Preencher Produto Foto QA com categoria Bebidas, preço 15 e estoque 10",
+      "Selecionar uma imagem JPEG de teste no campo Foto do produto e confirmar a pré-visualização",
+      "Salvar o produto",
+      "Retornar à lista de Produtos"
+    ],
+    "expected": "Produto Foto QA aparece na lista com a imagem escolhida e indicação de foto própria."
+  },
+  {
+    "name": "Abrir uma mesa, lançar produto e salvar pedido",
     "viewport": "desktop",
     "covers": [
       "tela de mesas no formato operacional",
@@ -11,7 +33,7 @@
       "taxa de serviço",
       "KDS"
     ],
-    "description": "Valida o fluxo principal inspirado no atendimento presencial: a mesa abre o cardápio, recebe itens e envia o pedido para a cozinha.",
+    "description": "Valida que a melhoria do cadastro de produtos não interfere no atendimento das mesas.",
     "steps": [
       "Abrir Mesas",
       "Clicar na Mesa 01",
@@ -22,43 +44,24 @@
     "expected": "O pedido da Mesa 01 é salvo com o produto e aparece como novo pedido no KDS."
   },
   {
-    "name": "Criar categoria e produto completo no construtor de cardápio",
+    "name": "Editar produto e trocar a foto",
     "viewport": "desktop",
     "covers": [
-      "Montar cardápio",
-      "API POST /api/menu/categories",
-      "API POST /api/products",
-      "canais de venda",
-      "custo e margem",
-      "complementos",
-      "ficha técnica"
-    ],
-    "description": "Valida que o gestor consegue montar o cardápio sem sair do sistema.",
-    "steps": [
-      "Abrir Montar cardápio e criar a categoria Teste QA com ordem 8",
-      "Criar o produto Produto QA nessa categoria com preço 20, custo 8, estoque 10 e canal Mesa ativo",
-      "Informar complemento Bacon e insumo Carne 100g",
-      "Salvar o produto"
-    ],
-    "expected": "A categoria Teste QA e o Produto QA aparecem no construtor, com preço e margem calculada."
-  },
-  {
-    "name": "Editar produto, duplicar e excluir a cópia",
-    "viewport": "desktop",
-    "covers": [
+      "Produtos",
       "API PUT /api/products/:id",
-      "duplicação de produto",
-      "API DELETE /api/products/:id",
-      "gestão de cardápio"
+      "API POST /api/products/:id/image",
+      "substituição de foto",
+      "edição de produto"
     ],
-    "description": "Valida manutenção completa dos produtos cadastrados.",
+    "description": "Valida que um produto existente pode ser aberto diretamente pela tela Produtos e receber uma nova imagem.",
     "steps": [
-      "Abrir Montar cardápio",
-      "Editar Smash Bacon alterando o tempo de preparo para 18 minutos e salvar",
-      "Duplicar Smash Bacon",
-      "Excluir a cópia criada"
+      "Abrir Produtos",
+      "Clicar em Editar no Smash Bacon",
+      "Selecionar uma nova imagem de teste no campo Foto do produto",
+      "Salvar produto",
+      "Retornar à lista"
     ],
-    "expected": "Smash Bacon permanece com a alteração salva e a cópia deixa de aparecer após a exclusão."
+    "expected": "Smash Bacon continua cadastrado e passa a exibir a nova foto na lista de Produtos."
   },
   {
     "name": "Salvar configuração operacional em mobile",
@@ -72,7 +75,7 @@
       "pagamentos",
       "responsividade"
     ],
-    "description": "Valida as novas opções de configuração sem prejudicar a experiência móvel.",
+    "description": "Valida que a alteração da tela Produtos não afeta as configurações e a experiência móvel.",
     "steps": [
       "Abrir Configurações",
       "Alterar a taxa de serviço para 12",
