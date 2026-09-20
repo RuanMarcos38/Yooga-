@@ -1,4 +1,4 @@
-import { db, storage, router, json, error } from '@appdeploy/sdk';
+import { ai, db, storage, router, json, error } from '@appdeploy/sdk';
 
 type P = {
   id: string;
@@ -365,6 +365,74 @@ function applyProduct(product: P, value: Partial<P>): P {
 
 export const handler = router({
   'GET /api/_healthcheck': [async () => json({ message: 'Success' })],
+
+  'POST /api/assistant': [async ({ body }) => {
+    const value = body as {
+      mode?: 'establishment' | 'customer';
+      message?: string;
+      page?: string;
+      table?: string;
+      history?: Array<{ role?: string; content?: string }>;
+    };
+
+    const mode = value.mode === 'customer' ? 'customer' : 'establishment';
+    const message = value.message?.trim();
+    if (!message) return error('Mensagem obrigatória', 400);
+
+    const safeHistory = (value.history || [])
+      .slice(-8)
+      .filter(item => (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string')
+      .map(item => ({
+        role: item.role as 'user' | 'assistant',
+        content: String(item.content).slice(0, 1200),
+      }));
+
+    const establishmentGuide = [
+      'Dashboard: métricas de pedidos, mesas ocupadas, tempos, alertas e caixa.',
+      'Pedidos/PDV: selecionar canal, mesa, produtos, quantidades, pagamento e salvar pedido.',
+      'Mesas: abrir cardápio da mesa, chamar garçom, copiar link do cliente e atender alertas.',
+      'Histórico/Caixa: abrir/fechar caixa, entradas, saídas, vendas, pagamentos e movimentações.',
+      'Montar cardápio: categorias, produtos, imagens, preço, custo, margem, canais, complementos e ficha técnica.',
+      'Cozinha/KDS: acompanhar e avançar pedidos entre Novo, Preparando, Pronto e Entregue.',
+      'Delivery: pedidos de entrega.',
+      'Produtos: cadastrar, editar, excluir e enviar foto.',
+      'Estoque: acompanhar e ajustar quantidades.',
+      'Financeiro: entradas e saídas.',
+      'Clientes/CRM: cadastro e histórico comercial.',
+      'Relatórios: indicadores da operação.',
+      'Configurações: taxas, QR, garçom, totem, pagamentos, KDS e alertas.',
+    ].join('\n');
+
+    const customerGuide = [
+      'O cliente só pode receber ajuda sobre sua própria experiência.',
+      'Pode acompanhar o status do pedido e os itens da própria mesa.',
+      'Pode ativar notificações do navegador.',
+      'Pode chamar o garçom.',
+      'Pode solicitar a conta.',
+      'Não pode receber instruções, valores internos ou dados sobre Dashboard, caixa, financeiro, estoque, CRM, relatórios, configurações, custos, margens, outras mesas ou administração.',
+      'Se perguntarem sobre uma área administrativa, explique que ela é restrita ao estabelecimento e oriente a falar com a equipe.',
+    ].join('\n');
+
+    const system = mode === 'customer'
+      ? `Você é o Assistente de IA do Modo Cliente do Mesa Restaurant OS. Responda em português do Brasil, de forma curta, clara e acolhedora. Nunca invente status, preço, prazo ou ação que não esteja no contexto. Não execute ações. Sua função é explicar como usar a interface do cliente. Regras e recursos permitidos:\n${customerGuide}\nMesa atual: ${value.table || 'não informada'}.`
+      : `Você é o Assistente de IA operacional do Mesa Restaurant OS. Responda em português do Brasil, com instruções práticas, curtas e passo a passo. Ajude o estabelecimento a usar o sistema sem inventar recursos que não existem e sem afirmar que executou ações. Quando for útil, indique o nome exato do módulo. Recursos atuais:\n${establishmentGuide}\nTela atual: ${value.page || 'não informada'}.`;
+
+    try {
+      const response = await ai.generate({
+        system,
+        messages: safeHistory.length ? safeHistory : [{ role: 'user', content: message }],
+        maxTokens: 650,
+        temperature: 0.2,
+        thinkingMode: 'FAST',
+      });
+
+      return json({ answer: response.text.trim() || 'Não consegui gerar uma orientação agora.' });
+    } catch (err) {
+      console.error('AI assistant error', err);
+      return error('Assistente temporariamente indisponível', 503);
+    }
+  }],
+
   'GET /api/state': [async () => json(await withSignedImages((await get()).state))],
 
   'GET /api/customer/table/:code': [async ({ params }) => {

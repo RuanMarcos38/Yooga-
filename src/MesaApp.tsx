@@ -47,6 +47,8 @@ import {
   Headphones,
   History,
   Store,
+  Send,
+  X,
 } from 'lucide-react';
 
 type Product = {
@@ -386,12 +388,6 @@ function AdminApp() {
           ))}
         </nav>
 
-        <div className="mt-auto rounded-xl border border-[#ebe7e2] bg-[#fffdfa] p-3 shadow-[0_8px_24px_rgba(45,42,38,0.04)]">
-          <div className="mb-2 h-20 overflow-hidden rounded-lg bg-[#eeeae4]"><img src="https://images.unsplash.com/photo-1777463210529-8599820d3a4d?auto=format&fit=crop&w=900&q=80" alt="Interior de restaurante" loading="lazy" className="h-full w-full object-cover natural-photo" /></div>
-          <strong className="text-xs">Como operar?</strong>
-          <p className="mt-1 text-[10px] leading-4 text-slate-400">Use o PDV, acompanhe a cozinha e controle toda a operação em um só lugar.</p>
-          <button onClick={() => setPage('pdv')} className="mt-2 rounded-full bg-[#f45f3f] px-3 py-1.5 text-[10px] font-bold text-white">Abrir PDV</button>
-        </div>
       </aside>
 
       {menu && <button aria-label="Fechar menu" className="fixed inset-0 z-40 bg-black/20 lg:hidden" onClick={() => setMenu(false)} />}
@@ -460,8 +456,10 @@ function AdminApp() {
         </div>
       </main>
 
+      <AiAssistant mode="establishment" page={page} />
+
       {toast && (
-        <div className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-xl bg-[#202538] px-4 py-3 text-xs font-semibold text-white shadow-xl">
+        <div className="fixed bottom-20 right-4 z-[60] flex items-center gap-2 rounded-xl bg-[#202538] px-4 py-3 text-xs font-semibold text-white shadow-xl">
           <Check size={15} className="text-emerald-400" />{toast}
         </div>
       )}
@@ -1353,7 +1351,132 @@ function CustomerPortal({ code }: { code: string }) {
 
         <p className="pb-6 text-center text-[10px] text-slate-400">Atualização automática a cada 5 segundos. Ative as notificações para ser avisado quando o pedido mudar de etapa.</p>
       </main>
+
+      <AiAssistant mode="customer" table={data.table.name} />
     </div>
+  );
+}
+
+type AssistantMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'; page?: Page; table?: string }) {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [messages, setMessages] = useState<AssistantMessage[]>([
+    {
+      role: 'assistant',
+      content: mode === 'customer'
+        ? 'Olá! Posso ajudar com seu pedido, status da mesa, notificações, chamar o garçom ou solicitar a conta.'
+        : 'Olá! Sou o assistente do sistema. Posso orientar sobre Dashboard, PDV, Mesas, Caixa, KDS, Cardápio, Estoque, Financeiro, CRM e demais módulos.',
+    },
+  ]);
+
+  const quickQuestions = mode === 'customer'
+    ? ['Como acompanho meu pedido?', 'Como chamo o garçom?', 'Como solicito a conta?']
+    : ['Como abrir uma mesa?', 'Como abrir ou fechar o caixa?', 'Como cadastrar produto com foto?'];
+
+  const ask = async (question?: string) => {
+    const text = (question || input).trim();
+    if (!text || sending) return;
+
+    const nextMessages: AssistantMessage[] = [...messages, { role: 'user', content: text }];
+    setMessages(nextMessages);
+    setInput('');
+    setSending(true);
+
+    try {
+      const response = await api.post('/api/assistant', {
+        mode,
+        message: text,
+        page,
+        table,
+        history: nextMessages.slice(-8),
+      });
+
+      setMessages(current => [
+        ...current,
+        {
+          role: 'assistant',
+          content: String(response.data?.answer || 'Não consegui gerar uma orientação agora. Tente novamente.'),
+        },
+      ]);
+    } catch {
+      setMessages(current => [
+        ...current,
+        {
+          role: 'assistant',
+          content: 'O assistente está temporariamente indisponível. Você pode continuar usando o sistema normalmente e tentar novamente em instantes.',
+        },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      {open && (
+        <section className="fixed bottom-[78px] right-3 z-[75] flex max-h-[min(540px,calc(100vh-105px))] w-[min(370px,calc(100vw-24px))] flex-col overflow-hidden rounded-2xl border border-[#e6e2dc] bg-[#fffefa] shadow-[0_22px_65px_rgba(38,35,32,.22)] sm:right-4">
+          <header className="flex items-center gap-3 border-b border-[#eeeae4] bg-white px-4 py-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#fff0eb] text-[#e85b3a]"><BrainCircuit size={18} /></span>
+            <div className="min-w-0 flex-1">
+              <b className="block text-xs">Assistente de IA</b>
+              <small className="block truncate text-[9px] text-slate-400">{mode === 'customer' ? 'Ajuda ao cliente · acesso limitado' : 'Ajuda operacional · estabelecimento'}</small>
+            </div>
+            <button aria-label="Fechar assistente" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X size={16} /></button>
+          </header>
+
+          <div className="flex-1 space-y-3 overflow-y-auto p-3">
+            {messages.map((message, index) => (
+              <div key={index} className={'flex ' + (message.role === 'user' ? 'justify-end' : 'justify-start')}>
+                <div className={'max-w-[88%] rounded-2xl px-3 py-2 text-[10px] leading-4 ' + (message.role === 'user' ? 'rounded-br-md bg-[#f45f3f] text-white' : 'rounded-bl-md border border-[#ece8e2] bg-white text-[#454a4d]')}>
+                  {message.content}
+                </div>
+              </div>
+            ))}
+            {sending && <div className="w-fit rounded-2xl rounded-bl-md border border-[#ece8e2] bg-white px-3 py-2 text-[10px] text-slate-400">Pensando...</div>}
+          </div>
+
+          {messages.length <= 2 && (
+            <div className="flex gap-1.5 overflow-x-auto border-t border-[#f1eee9] px-3 py-2">
+              {quickQuestions.map(question => (
+                <button key={question} disabled={sending} onClick={() => void ask(question)} className="whitespace-nowrap rounded-full border border-[#e8e3dd] bg-white px-2.5 py-1.5 text-[8px] font-semibold text-[#5c6266] hover:border-[#f0a08d] hover:text-[#dc5739]">{question}</button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 border-t border-[#eeeae4] bg-white p-3">
+            <textarea
+              value={input}
+              onChange={event => setInput(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void ask();
+                }
+              }}
+              rows={1}
+              placeholder={mode === 'customer' ? 'Dúvida sobre seu pedido...' : 'Como posso usar o sistema?'}
+              className="max-h-24 min-h-10 flex-1 resize-none rounded-xl border border-[#dfdcd6] bg-[#faf9f7] px-3 py-2.5 text-[10px] outline-none focus:border-[#e99b88]"
+            />
+            <button aria-label="Enviar mensagem" disabled={!input.trim() || sending} onClick={() => void ask()} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f45f3f] text-white disabled:opacity-40"><Send size={15} /></button>
+          </div>
+        </section>
+      )}
+
+      <button
+        aria-label={open ? 'Fechar Assistente de IA' : 'Abrir Assistente de IA'}
+        onClick={() => setOpen(value => !value)}
+        className="fixed bottom-4 right-3 z-[76] flex h-12 items-center gap-2 rounded-full bg-[#202538] px-3.5 text-white shadow-[0_12px_30px_rgba(32,37,56,.28)] transition hover:-translate-y-0.5 sm:right-4"
+      >
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-[#f45f3f]"><BrainCircuit size={15} /></span>
+        <span className="hidden pr-1 text-[9px] font-bold sm:block">Assistente IA</span>
+      </button>
+    </>
   );
 }
 
@@ -1873,36 +1996,4 @@ function SettingsView(props: ViewProps) {
       </div>
     </PageSection>
   );
-}
-
-function PageSection({ title, subtitle, action, onAction, children }: { title: string; subtitle: string; action?: string; onAction?: () => void | Promise<void>; children: ReactNode }) {
-  return <section><div className="mb-4 flex items-center justify-between"><div><h1 className="text-lg font-bold">{title}</h1><p className="text-xs text-slate-400">{subtitle}</p></div>{action && <button onClick={() => void onAction?.()} className="flex items-center gap-2 rounded-lg bg-[#f45f3f] px-4 py-2.5 text-[10px] font-bold text-white"><Plus size={14} />{action}</button>}</div>{children}</section>;
-}
-
-function Surface({ children }: { children: ReactNode }) {
-  return <section className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_10px_28px_rgba(46,42,38,0.04)]">{children}</section>;
-}
-
-function DataRow({ children }: { children: ReactNode }) {
-  return <div className="flex min-h-14 items-center gap-3 border-t border-[#f0f0f4] first:border-t-0">{children}</div>;
-}
-
-function SectionHead({ title, subtitle }: { title: string; subtitle: string }) {
-  return <div className="mb-4"><h3 className="text-sm font-bold">{title}</h3><p className="text-[10px] text-slate-400">{subtitle}</p></div>;
-}
-
-function Badge({ value }: { value: string }) {
-  return <span className={'rounded-full px-2 py-1 text-[9px] font-bold ' + badgeClass(value)}>{value}</span>;
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-4 shadow-[0_8px_24px_rgba(46,42,38,0.035)]"><span className="text-[10px] text-slate-400">{label}</span><strong className="mt-2 block text-xl tracking-[-0.02em] text-[#2d2e32]">{value}</strong><span className="mt-1 flex items-center gap-1 text-[9px] text-emerald-600"><ArrowUpRight size={11} />Atualizado agora</span></div>;
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-lg bg-[#f7f8fa] p-4"><span className="block text-[9px] text-slate-400">{label}</span><b className="mt-1 block text-sm">{value}</b></div>;
-}
-
-function Preference({ icon, title, value }: { icon: ReactNode; title: string; value: string }) {
-  return <div className="flex items-center gap-3 border-t border-[#f0f0f4] py-3 first:border-t-0"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#e85b3a]">{icon}</span><span className="flex-1 text-xs font-semibold">{title}</span><b className="text-[10px] text-emerald-600">{value}</b></div>;
 }

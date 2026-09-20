@@ -1,100 +1,97 @@
 [
   {
-    "name": "Abrir e fechar caixa pelo Dashboard",
+    "name": "Assistente IA ajuda o estabelecimento e substitui Como operar",
     "sanity": true,
     "viewport": "desktop",
     "covers": [
-      "Dashboard compacto",
-      "status do caixa",
-      "POST /api/cash/close",
-      "POST /api/cash/open",
-      "persistência do caixa"
+      "remoção do bloco Como operar",
+      "Assistente de IA flutuante",
+      "POST /api/assistant modo establishment",
+      "orientação operacional contextual"
     ],
-    "description": "Valida o controle de caixa diretamente no Dashboard sem depender da tela de Histórico.",
+    "description": "Valida que o cartão antigo da lateral foi removido e o novo assistente ajuda sem ocupar permanentemente a área operacional.",
     "steps": [
-      "Abrir o Dashboard e localizar a faixa Caixa",
-      "Se o caixa estiver aberto clicar em Fechar caixa e confirmar",
-      "Clicar em Abrir caixa e informar valor de abertura 20",
-      "Confirmar que o status volta para Aberto e o valor de abertura é exibido"
+      "Abrir o sistema administrativo e confirmar que o cartão Como operar não aparece na lateral",
+      "Abrir o botão Assistente IA no canto inferior direito",
+      "Perguntar Como abrir ou fechar o caixa?",
+      "Observar a resposta do assistente"
     ],
-    "expected": "O Dashboard permite fechar e abrir o caixa e mostra o estado e o valor de abertura atualizados."
+    "expected": "O painel do assistente abre sobreposto no canto, responde com orientação do módulo de caixa e o restante do sistema continua visível."
   },
   {
-    "name": "Tempo de espera parte da confirmação do pedido",
-    "viewport": "desktop",
-    "covers": [
-      "tempo de espera",
-      "createdAt do pedido",
-      "API POST /api/orders",
-      "API PUT /api/orders/:id/status",
-      "Dashboard operacional"
-    ],
-    "description": "Valida que a contagem de espera começa quando o pedido é salvo e termina quando o preparo é iniciado.",
-    "steps": [
-      "Abrir uma mesa e salvar um novo pedido",
-      "Abrir o Dashboard e observar Tempo de espera e o pedido em andamento",
-      "Abrir Cozinha / KDS e iniciar o preparo do pedido",
-      "Voltar ao Dashboard"
-    ],
-    "expected": "A espera usa o momento de confirmação do pedido como início e deixa de acumular quando o pedido entra em Preparando."
-  },
-  {
-    "name": "Mesas possuem rolagem e alerta de garçom",
-    "viewport": "desktop",
-    "covers": [
-      "lista de mesas com rolagem própria",
-      "botão Chamar garçom por mesa",
-      "mesa vermelha com alerta",
-      "POST /api/customer/table/:code/request",
-      "PUT /api/service-requests/:id/resolve"
-    ],
-    "description": "Valida a organização da tela Mesas e o fluxo de atendimento sem alterar a navegação existente.",
-    "steps": [
-      "Abrir Mesas",
-      "Rolar a área de mesas sem sair da tela",
-      "Clicar em Chamar garçom em uma mesa livre",
-      "Confirmar que a mesa fica vermelha",
-      "Clicar em Atender"
-    ],
-    "expected": "A grade de mesas rola dentro da área operacional e o alerta vermelho desaparece após o atendimento."
-  },
-  {
-    "name": "Interfaces Estabelecimento e Cliente permanecem separadas",
+    "name": "Assistente do cliente respeita acesso limitado",
     "viewport": "mobile",
     "covers": [
-      "Modo Estabelecimento acesso total",
-      "Modo Cliente acesso limitado",
-      "responsividade mobile",
-      "GET /api/customer/table/:code"
+      "Assistente de IA no Modo Cliente",
+      "POST /api/assistant modo customer",
+      "limite de informações administrativas",
+      "responsividade mobile"
     ],
-    "description": "Valida a separação visual e funcional entre a operação interna e o acesso do consumidor.",
+    "description": "Valida que a IA do cliente não orienta sobre áreas internas do estabelecimento.",
     "steps": [
-      "Na interface administrativa confirmar a identificação Modo Estabelecimento",
       "Abrir o link do cliente da Mesa 01 em viewport mobile",
-      "Confirmar a identificação Modo Cliente acesso limitado",
-      "Verificar que o cliente vê mesa, pedido, notificações e atendimento"
+      "Abrir Assistente IA",
+      "Perguntar Como acesso o estoque e o financeiro?"
     ],
-    "expected": "A interface do cliente não apresenta menu administrativo, caixa, estoque, relatórios ou configurações, enquanto o estabelecimento mantém o painel completo."
+    "expected": "O assistente informa que essas áreas são restritas ao estabelecimento e mantém a ajuda limitada à experiência da mesa e do pedido."
   },
   {
-    "name": "Módulos existentes continuam preservados",
+    "name": "Falha temporária do assistente mostra mensagem sem bloquear sistema",
     "viewport": "desktop",
     "covers": [
-      "PDV",
-      "Montar cardápio",
-      "Produtos com foto",
-      "Histórico / Caixa",
-      "KDS",
-      "regressão da estrutura existente"
+      "tratamento de erro do Assistente de IA",
+      "POST /api/assistant falha",
+      "continuidade da interface"
     ],
-    "description": "Verifica que os ajustes de dashboard, caixa e mesas não removem os módulos já implementados.",
+    "description": "Valida que uma indisponibilidade da IA não impede o uso normal do SaaS.",
+    "qa_faults": [
+      {
+        "method": "POST",
+        "path": "/api/assistant",
+        "status": 503,
+        "body_json": {
+          "error": "Assistente temporariamente indisponível"
+        }
+      }
+    ],
+    "steps": [
+      "Abrir Assistente IA no sistema administrativo",
+      "Perguntar Como cadastrar um produto?"
+    ],
+    "expected": "Uma mensagem visível informa que o assistente está temporariamente indisponível e os módulos do sistema continuam utilizáveis."
+  },
+  {
+    "name": "Assistente não interfere no PDV e nas mesas",
+    "viewport": "desktop",
+    "covers": [
+      "PDV preservado",
+      "Mesas preservadas",
+      "posição não intrusiva do Assistente de IA"
+    ],
+    "description": "Verifica que o botão flutuante não altera a estrutura operacional existente.",
     "steps": [
       "Abrir Pedidos / PDV",
-      "Abrir Montar cardápio",
-      "Abrir Produtos",
-      "Abrir Histórico / Caixa",
-      "Abrir Cozinha / KDS"
+      "Confirmar produtos e painel da mesa/pedido",
+      "Abrir Mesas",
+      "Confirmar cards e rolagem das mesas"
     ],
-    "expected": "Todos os módulos permanecem acessíveis e com a estrutura anterior preservada."
+    "expected": "PDV e Mesas mantêm sua estrutura e o Assistente IA fica restrito ao canto inferior direito."
+  },
+  {
+    "name": "Fluxos de caixa e cliente continuam preservados",
+    "viewport": "desktop",
+    "covers": [
+      "Dashboard",
+      "abrir e fechar caixa",
+      "Modo Cliente",
+      "regressão dos recursos existentes"
+    ],
+    "description": "Garante que a inclusão da IA não remove os recursos operacionais anteriores.",
+    "steps": [
+      "Abrir Dashboard e confirmar o status do caixa",
+      "Abrir Histórico / Caixa",
+      "Abrir o link do cliente da Mesa 01"
+    ],
+    "expected": "Dashboard, Caixa e Modo Cliente permanecem acessíveis e funcionais após a inclusão do assistente."
   }
 ]
