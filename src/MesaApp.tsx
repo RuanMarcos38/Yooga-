@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api } from '@appdeploy/client';
+import { api, apiBaseUrl } from './lib/api';
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -2274,7 +2274,7 @@ function SettingsView(props: ViewProps) {
   }
 
   if (section === 'open-api') {
-    const origin = window.location.origin;
+    const origin = apiBaseUrl || window.location.origin;
     return (
       <section>
         <SettingsBack title="API Aberta + Webhooks" onBack={() => setSection('integrations')} subtitle="Integre sistemas externos ao Mesa Restaurant OS" />

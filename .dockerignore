@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-backend
+backend/data
+.git
+.env
+.env.*
+*.log
+work

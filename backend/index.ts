@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { ai, db, storage, router, json, error } from '@appdeploy/sdk';
+import { ai, db, storage, router, json, error } from './appdeploy-compat.js';
 
 type P = {
   id: string;
@@ -270,13 +270,13 @@ function normalizeState(raw: Partial<S>): S {
   const base = seed();
   return {
     products: (raw.products || base.products).map(product => ({
-      active: true,
-      featured: false,
-      prepTime: 15,
-      channels: ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
-      addons: [],
-      ingredients: [],
       ...product,
+      active: product.active ?? true,
+      featured: product.featured ?? false,
+      prepTime: product.prepTime ?? 15,
+      channels: product.channels ?? ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
+      addons: product.addons ?? [],
+      ingredients: product.ingredients ?? [],
     })),
     menuCategories: raw.menuCategories?.length ? raw.menuCategories : base.menuCategories,
     tables: raw.tables || base.tables,
@@ -742,7 +742,7 @@ export const handler = router({
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const current = await get();
     const validated = validateOrderItems(current.state, value.items);
-    if ('error' in validated) return error(validated.error, 400);
+    if ('error' in validated) return error(String(validated.error), 400);
 
     const channel = value.channel || 'API';
     if (!allowedOrderChannels.has(channel)) return error('Canal inválido', 400);
@@ -1232,7 +1232,7 @@ export const handler = router({
   'POST /api/products/:id/image': [async ({ params, body }) => {
     const value = body as { content?: string; contentType?: string };
     const validatedImage = validateImagePayload(value);
-    if ('error' in validatedImage) return error(validatedImage.error, 400);
+    if ('error' in validatedImage) return error(String(validatedImage.error), 400);
     const current = await get();
     const product = current.state.products.find(item => item.id === params.id);
     if (!product) return error('Produto não encontrado', 404);
@@ -1293,7 +1293,7 @@ export const handler = router({
   'POST /api/menu/categories/:id/image': [async ({ params, body }) => {
     const value = body as { content?: string; contentType?: string };
     const validatedImage = validateImagePayload(value);
-    if ('error' in validatedImage) return error(validatedImage.error, 400);
+    if ('error' in validatedImage) return error(String(validatedImage.error), 400);
     const current = await get();
     const category = current.state.menuCategories.find(item => item.id === params.id);
     if (!category) return error('Categoria não encontrada', 404);
@@ -1340,7 +1340,7 @@ export const handler = router({
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const current = await get();
     const validated = validateOrderItems(current.state, value.items);
-    if ('error' in validated) return error(validated.error, 400);
+    if ('error' in validated) return error(String(validated.error), 400);
 
     const channel = value.channel || 'Balcão';
     if (!allowedOrderChannels.has(channel)) return error('Canal inválido', 400);
