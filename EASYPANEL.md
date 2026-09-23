@@ -6,14 +6,14 @@ Este projeto agora está preparado para rodar em dois serviços separados no Eas
 
 - Tipo: Dockerfile
 - Dockerfile: `Dockerfile.backend`
-- Porta interna: `3000`
+- Porta interna: `80`
 - Domínio sugerido: `https://api.tapfood.com.br`
 - Volume persistente: `/data`
 
 Variáveis:
 
 ```env
-PORT=3000
+PORT=80
 DATA_DIR=/data
 PUBLIC_API_URL=https://api.tapfood.com.br
 CORS_ORIGIN=https://tapfood.com.br,https://www.tapfood.com.br
