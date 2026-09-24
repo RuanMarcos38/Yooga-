@@ -39,6 +39,10 @@ No backend, configure `PUBLIC_API_URL=https://api.tapfood.com.br`, `DATA_DIR=/da
 
 Veja o passo a passo completo em `EASYPANEL.md`.
 
+### Deploy automático
+
+O repositório inclui o workflow `.github/workflows/easypanel-deploy.yml` para acionar o deploy do EasyPanel quando houver push na branch `main`. Configure os secrets `EASYPANEL_BACKEND_DEPLOY_URL` e `EASYPANEL_FRONTEND_DEPLOY_URL` no GitHub com os `Deployment Trigger URL` de cada serviço.
+
 ## Estrutura
 
 - `src/` — frontend

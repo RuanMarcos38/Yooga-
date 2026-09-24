@@ -1275,10 +1275,36 @@ export const handler = router({
     const current = await get();
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
+    const publicState = await withSignedImages(current.state);
     const orders = current.state.orders
       .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pendingRequests = current.state.serviceRequests.filter(request => request.table === table.name && request.status === 'pending');
+    const menuCategories = publicState.menuCategories
+      .filter(category => category.active)
+      .sort((a, b) => a.order - b.order)
+      .map(category => ({
+        id: category.id,
+        name: category.name,
+        active: category.active,
+        order: category.order,
+        imageUrl: category.imageUrl,
+      }));
+    const products = publicState.products
+      .filter(product => product.active && (!product.channels?.length || product.channels.includes('Mesa')))
+      .map(product => ({
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        price: product.price,
+        stock: product.stock,
+        active: product.active,
+        description: product.description || '',
+        featured: product.featured || false,
+        prepTime: product.prepTime || 15,
+        channels: product.channels || [],
+        imageUrl: product.imageUrl,
+      }));
     return json({
       store: {
         restaurantName: current.state.settings.restaurantName,
@@ -1289,7 +1315,49 @@ export const handler = router({
       table,
       orders,
       pendingRequests,
+      menuCategories,
+      products,
     });
+  }],
+
+  'POST /api/customer/table/:code/orders': [async ({ params, body }) => {
+    const value = body as { customer?: string; items?: Array<Partial<I>> };
+    if (!value.items?.length) return error('Pedido sem itens', 400);
+    const current = await get();
+    const table = tableFromCode(current.state, params.code);
+    if (!table) return error('Mesa não encontrada', 404);
+    const validated = validateOrderItems(current.state, value.items);
+    if ('error' in validated) return error(String(validated.error), 400);
+
+    const unavailableForTable = validated.items.find(item => {
+      const product = current.state.products.find(candidate => candidate.id === item.productId);
+      return product?.channels?.length && !product.channels.includes('Mesa');
+    });
+    if (unavailableForTable) return error('Produto indisponível para mesa', 400);
+
+    const subtotal = Number(validated.items.reduce((sum, item) => sum + item.price * item.qty, 0).toFixed(2));
+    const fee = current.state.settings.automaticServiceFee ? subtotal * (current.state.settings.serviceFee / 100) : 0;
+    const total = Number((subtotal + fee).toFixed(2));
+    const sequence = 1051 + current.state.orders.filter(order => /^#\d+$/.test(order.code) && Number(order.code.slice(1)) >= 1051).length;
+    const createdAt = new Date().toISOString();
+    const order: O = {
+      id: 'co' + Date.now(),
+      code: '#' + sequence,
+      channel: 'Mesa',
+      table: table.name,
+      customer: value.customer?.trim().slice(0, 120) || 'Cliente da mesa',
+      items: validated.items,
+      total,
+      status: 'Novo',
+      createdAt,
+      updatedAt: createdAt,
+      paymentMethod: 'Na mesa',
+    };
+    applyOrderEffects(current.state, order);
+    audit(current.state, 'order', order.id, 'Pedido enviado pelo cliente', order.code + ' · ' + table.name, 'Cliente');
+    await save(current.id, current.state);
+    await notifyN8n(current.state, 'order.created_from_customer', { order, table });
+    return json(order, 201);
   }],
 
   'POST /api/customer/table/:code/register': [async ({ params, body }) => {
