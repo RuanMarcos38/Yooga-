@@ -1426,6 +1426,66 @@ type CustomerPortalData = {
   products: Product[];
 };
 
+const normalizeCustomerPortalData = (raw: Partial<CustomerPortalData>, code: string): CustomerPortalData => {
+  const tableName = raw.table?.name || decodeURIComponent(code).replace(/-/g, ' ').trim() || 'Mesa';
+  const tableStatus = raw.table?.status && ['Livre', 'Ocupada', 'Aguardando', 'Fechamento'].includes(raw.table.status)
+    ? raw.table.status
+    : 'Livre';
+  const serviceFee = Number(raw.store?.serviceFee ?? defaultSettings.serviceFee);
+
+  return {
+    store: {
+      restaurantName: raw.store?.restaurantName || defaultSettings.restaurantName,
+      unit: raw.store?.unit || defaultSettings.unit,
+      serviceFee: Number.isFinite(serviceFee) ? serviceFee : defaultSettings.serviceFee,
+      automaticServiceFee: raw.store?.automaticServiceFee ?? defaultSettings.automaticServiceFee,
+    },
+    table: {
+      id: raw.table?.id || tableName.toLowerCase().replace(/\s+/g, '-'),
+      name: tableName,
+      seats: Number(raw.table?.seats ?? 0),
+      status: tableStatus,
+      total: Number(raw.table?.total ?? 0),
+      waiter: raw.table?.waiter,
+    },
+    orders: Array.isArray(raw.orders) ? raw.orders : [],
+    pendingRequests: Array.isArray(raw.pendingRequests) ? raw.pendingRequests : [],
+    menuCategories: Array.isArray(raw.menuCategories) ? raw.menuCategories : [],
+    products: Array.isArray(raw.products) ? raw.products : [],
+  };
+};
+
+const loadCustomerMenuFallback = async (data: CustomerPortalData): Promise<CustomerPortalData> => {
+  if (data.products.length || data.menuCategories.length) return data;
+
+  try {
+    const response = await api.get<Partial<State>>('/api/state');
+    const state = response.data;
+    const menuCategories = Array.isArray(state.menuCategories)
+      ? state.menuCategories
+        .filter(category => category.active)
+        .sort((a, b) => a.order - b.order)
+      : [];
+    const products = Array.isArray(state.products)
+      ? state.products.filter(product => product.active && (!product.channels?.length || product.channels.includes('Mesa')))
+      : [];
+
+    return {
+      ...data,
+      store: state.settings ? {
+        restaurantName: state.settings.restaurantName || data.store.restaurantName,
+        unit: state.settings.unit || data.store.unit,
+        serviceFee: Number(state.settings.serviceFee ?? data.store.serviceFee),
+        automaticServiceFee: state.settings.automaticServiceFee ?? data.store.automaticServiceFee,
+      } : data.store,
+      menuCategories,
+      products,
+    };
+  } catch {
+    return data;
+  }
+};
+
 function CustomerPortal({ code, session, onLogout }: { code: string; session?: AuthSession | null; onLogout?: () => void }) {
   const [data, setData] = useState<CustomerPortalData | null>(null);
   const [error, setError] = useState('');
@@ -1450,7 +1510,8 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   const load = async () => {
     try {
       const response = await api.get('/api/customer/table/' + encodeURIComponent(code));
-      const next = response.data as CustomerPortalData;
+      const payload = response.data && typeof response.data === 'object' ? response.data as Partial<CustomerPortalData> : {};
+      const next = await loadCustomerMenuFallback(normalizeCustomerPortalData(payload, code));
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         next.orders.forEach(order => {
           const previous = lastStatuses.current[order.id];
