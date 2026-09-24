@@ -13,14 +13,30 @@ declare global {
   }
 }
 
-const runtimeApiBaseUrl = typeof window === 'undefined' ? '' : window.__APP_CONFIG__?.API_BASE_URL || '';
+type ImportMetaWithEnv = ImportMeta & { env?: { VITE_API_BASE_URL?: string } };
 
-export const apiBaseUrl = (runtimeApiBaseUrl || import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const runtimeApiBaseUrl = typeof window === 'undefined' ? '' : window.__APP_CONFIG__?.API_BASE_URL || '';
+const viteApiBaseUrl = ((import.meta as ImportMetaWithEnv).env?.VITE_API_BASE_URL || '');
+
+export const apiBaseUrl = (runtimeApiBaseUrl || viteApiBaseUrl || '').replace(/\/+$/, '');
+
+const authHeaders = (): Record<string, string> => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem('tapfood-auth-session');
+    const token = raw ? (JSON.parse(raw) as { token?: string }).token : '';
+    return token ? { Authorization: 'Bearer ' + token } : {};
+  } catch {
+    return {};
+  }
+};
 
 async function request<T = unknown>(method: string, path: string, body?: RequestBody): Promise<ApiResponse<T>> {
+  const headers: Record<string, string> = { ...authHeaders() };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(apiBaseUrl + path, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, apiBaseUrl } from './lib/api';
 import {
   LayoutDashboard,
@@ -21,13 +21,11 @@ import {
   Search,
   SlidersHorizontal,
   Bell,
-  ChevronDown,
   Heart,
   CreditCard,
   Banknote,
   QrCode,
   Wallet,
-  RotateCcw,
   MessageCircle,
   Clock3,
   Star,
@@ -44,14 +42,12 @@ import {
   Truck,
   ShieldCheck,
   BrainCircuit,
-  Headphones,
   History,
   Store,
   Send,
   X,
   Globe2,
   KeyRound,
-  Link2,
   RefreshCw,
   Code2,
   MapPinned,
@@ -110,11 +106,15 @@ type AppSettings = {
   deliveryMinimum: number;
   freeDeliveryFrom: number;
   openingHours: string;
+  kitchenPrinter: string;
+  counterPrinter: string;
+  barPrinter: string;
+  printCopies: number;
 };
 type Table = { id: string; name: string; seats: number; status: 'Livre' | 'Ocupada' | 'Aguardando' | 'Fechamento'; total: number; waiter?: string };
 type Item = { productId: string; name: string; qty: number; price: number };
 type Order = { id: string; code: string; channel: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; updatedAt?: string; startedAt?: string; readyAt?: string; deliveredAt?: string; paymentMethod?: string };
-type Customer = { id: string; name: string; phone: string; orders: number; totalSpent: number; lastOrder: string };
+type Customer = { id: string; name: string; phone: string; email?: string; orders: number; totalSpent: number; lastOrder: string };
 type Stock = { id: string; name: string; unit: string; current: number; minimum: number; cost: number };
 type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string; createdAt?: string };
 type CashRegister = { status: 'Aberto' | 'Fechado'; openingAmount: number; openedAt: string; closedAt?: string; closingAmount?: number };
@@ -134,9 +134,11 @@ type State = {
   settings: AppSettings;
 };
 type Page = 'dashboard' | 'pdv' | 'tables' | 'history' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
+type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; token: string; expiresAt: string };
 
 const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ACCENT = '#f45f3f';
+const AUTH_STORAGE_KEY = 'tapfood-auth-session';
 
 const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['dashboard', 'Dashboard', LayoutDashboard],
@@ -177,8 +179,8 @@ const pageFromPath = (pathname: string): Page => {
 };
 
 const defaultSettings: AppSettings = {
-  restaurantName: 'Mesa Restaurante',
-  unit: 'Unidade Centro',
+  restaurantName: 'TAPFOOD',
+  unit: 'Unidade Principal',
   serviceFee: 10,
   automaticServiceFee: true,
   qrMenuEnabled: true,
@@ -197,6 +199,10 @@ const defaultSettings: AppSettings = {
   deliveryMinimum: 20,
   freeDeliveryFrom: 80,
   openingHours: '11:00 às 23:00',
+  kitchenPrinter: 'Cozinha',
+  counterPrinter: 'Balcão',
+  barPrinter: 'Bar',
+  printCopies: 1,
 };
 
 const empty: State = {
@@ -251,13 +257,123 @@ const badgeClass = (value: string) => {
   return 'bg-amber-50 text-amber-700';
 };
 
+const readStoredSession = (): AuthSession | null => {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AuthSession;
+    if (!parsed?.token || !parsed.expiresAt || Date.parse(parsed.expiresAt) <= Date.now()) {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const tableLoginPassword = (tableName: string) => 'mesa' + (tableName.match(/\d+/)?.[0] || '01').padStart(2, '0');
+
 export default function MesaApp() {
   const customerCode = new URLSearchParams(window.location.search).get('cliente');
-  if (customerCode) return <CustomerPortal code={customerCode} />;
-  return <AdminApp />;
+  const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
+
+  const handleLogin = (nextSession: AuthSession) => {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession));
+    setSession(nextSession);
+    if (window.location.pathname !== '/') window.history.pushState({}, '', '/');
+  };
+
+  const handleLogout = () => {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    setSession(null);
+    if (window.location.pathname !== '/') window.history.pushState({}, '', '/');
+  };
+
+  if (customerCode) return <CustomerPortal code={customerCode} session={session} onLogout={session?.mode === 'cliente' ? handleLogout : undefined} />;
+  if (!session) return <LoginScreen onLogin={handleLogin} />;
+  if (session.mode === 'cliente') return <CustomerPortal code={session.tableCode || 'Mesa 01'} session={session} onLogout={handleLogout} />;
+  return <AdminApp session={session} onLogout={handleLogout} />;
 }
 
-function AdminApp() {
+function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const [mode, setMode] = useState<'empresa' | 'cliente'>('empresa');
+  const [email, setEmail] = useState('admin@tapfood.com.br');
+  const [tableCode, setTableCode] = useState('Mesa 01');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await api.post<AuthSession>('/api/auth/login', mode === 'empresa'
+        ? { mode, email, password }
+        : { mode, table: tableCode, password });
+      onLogin(response.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível entrar.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
+      <div className="mx-auto grid min-h-screen max-w-6xl items-center gap-6 px-4 py-8 lg:grid-cols-[.95fr_1.05fr]">
+        <section className="space-y-6">
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#f45f3f] text-white"><Utensils size={22} /></span>
+            <div>
+              <h1 className="text-3xl font-black tracking-normal text-[#202538]">TAPFOOD</h1>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#f45f3f]">Gestão de atendimento, mesas e pedidos</p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Metric label="Mesas conectadas" value="40" />
+            <Metric label="Pedidos em tempo real" value="KDS" />
+            <Metric label="Cliente na mesa" value="QR" />
+          </div>
+          <div className="rounded-xl border border-[#e4e1dc] bg-[#fffefa] p-4 text-sm leading-6 text-slate-600">
+            Operação preparada para loja, salão, balcão e cliente final com notificações, integrações e controle por perfil.
+          </div>
+        </section>
+
+        <form onSubmit={submit} className="rounded-2xl border border-[#e6e2dc] bg-[#fffefa] p-5 shadow-[0_24px_70px_rgba(38,35,32,.12)]">
+          <div className="mb-5 flex rounded-xl border border-[#ece8e2] bg-white p-1">
+            <button type="button" onClick={() => setMode('empresa')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-bold ' + (mode === 'empresa' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Empresa</button>
+            <button type="button" onClick={() => setMode('cliente')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-bold ' + (mode === 'cliente' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Cliente</button>
+          </div>
+
+          <div className="mb-5">
+            <h2 className="text-xl font-black">{mode === 'empresa' ? 'Acesso do estabelecimento' : 'Acesso do cliente'}</h2>
+            <p className="mt-1 text-xs text-slate-400">{mode === 'empresa' ? 'Painel completo da operação.' : 'Acompanhamento da mesa e do pedido.'}</p>
+          </div>
+
+          <div className="space-y-3">
+            {mode === 'empresa' ? (
+              <Field label="E-mail"><input autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} className="control" /></Field>
+            ) : (
+              <Field label="Mesa"><input value={tableCode} onChange={event => setTableCode(event.target.value)} placeholder="Mesa 01" className="control" /></Field>
+            )}
+            <Field label="Senha"><input autoComplete={mode === 'empresa' ? 'current-password' : 'one-time-code'} type="password" value={password} onChange={event => setPassword(event.target.value)} className="control" /></Field>
+          </div>
+
+          {mode === 'cliente' && <p className="mt-2 text-[10px] text-slate-400">A senha da mesa segue o padrão informado ao estabelecimento.</p>}
+          {error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">{error}</div>}
+
+          <button disabled={busy || !password.trim()} className="mt-5 w-full rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-black text-white disabled:opacity-50">
+            {busy ? 'Entrando...' : 'Entrar'}
+          </button>
+        </form>
+      </div>
+    </main>
+  );
+}
+
+function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () => void }) {
   const [page, setPageState] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [data, setData] = useState<State>(empty);
   const [loading, setLoading] = useState(true);
@@ -415,8 +531,8 @@ function AdminApp() {
             <Utensils size={15} />
           </span>
           <div>
-            <strong className="block text-lg tracking-tight text-[#ef5a38]">mesa<span className="text-[#f6b62f]">food</span></strong>
-            <span className="block text-[10px] text-slate-400">Restaurant Management</span>
+            <strong className="block text-lg tracking-normal text-[#ef5a38]">TAP<span className="text-[#202538]">FOOD</span></strong>
+            <span className="block text-[10px] text-slate-400">Gestão de Restaurantes</span>
           </div>
         </div>
 
@@ -451,10 +567,10 @@ function AdminApp() {
             Filtro <SlidersHorizontal size={14} />
           </button>
           <button className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
-          <button className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">RM</span>
-            <span className="hidden text-left md:block"><strong className="block text-[11px]">Administrador</strong><small className="block text-[9px] text-slate-400">Modo Estabelecimento · acesso total · {data.settings.unit}</small></span>
-            <ChevronDown size={14} className="text-slate-400" />
+          <button onClick={onLogout} className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('') || 'TF'}</span>
+            <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">Empresa · acesso total · {data.settings.unit}</small></span>
+            <LogOut size={14} className="text-slate-400" />
           </button>
         </header>
 
@@ -499,6 +615,8 @@ function AdminApp() {
               setSettingsForm={setSettingsForm}
               setPage={setPage}
               openTableOrder={openTableOrder}
+              session={session}
+              onLogout={onLogout}
             />
           )}
         </div>
@@ -546,6 +664,8 @@ type ViewProps = {
   setSettingsForm: (value: AppSettings) => void;
   setPage: (page: Page) => void;
   openTableOrder: (tableName: string) => void;
+  session: AuthSession;
+  onLogout: () => void;
 };
 
 function PageView(props: ViewProps) {
@@ -1145,7 +1265,7 @@ function ProductEditor({ product, categories, run, onClose }: { product: Product
       if (id) {
         await api.put('/api/products/' + id, payload);
       } else {
-        const created = await api.post('/api/products', payload);
+        const created = await api.post<Product>('/api/products', payload);
         id = created.data.id;
       }
       if (file && id) {
@@ -1217,7 +1337,7 @@ function CategoryEditor({ category, run, onClose }: { category: MenuCategory | n
       if (id) {
         await api.put('/api/menu/categories/' + id, payload);
       } else {
-        const created = await api.post('/api/menu/categories', payload);
+        const created = await api.post<MenuCategory>('/api/menu/categories', payload);
         id = created.data.id;
       }
       if (file && id) {
@@ -1284,10 +1404,6 @@ function SettingToggle({ icon, title, subtitle, enabled, onClick }: { icon: Reac
   return <button onClick={onClick} className="flex w-full items-center gap-3 border-t border-[#f0efec] py-3 text-left first:border-t-0"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#e85b3a]">{icon}</span><span className="min-w-0 flex-1"><b className="block text-xs">{title}</b><small className="text-[9px] text-slate-400">{subtitle}</small></span><span className={'relative h-6 w-11 rounded-full transition ' + (enabled ? 'bg-emerald-500' : 'bg-slate-300')}><span className={'absolute top-1 h-4 w-4 rounded-full bg-white transition ' + (enabled ? 'left-6' : 'left-1')} /></span></button>;
 }
 
-function IntegrationCard({ icon, title }: { icon: ReactNode; title: string }) {
-  return <div className="rounded-xl border border-[#ece9e4] p-3"><span className="text-[#e85b3a]">{icon}</span><b className="mt-2 block text-[10px]">{title}</b><small className="text-[9px] text-slate-400">Disponível para integração</small></div>;
-}
-
 function QuickIcon({ icon }: { icon: ReactNode }) {
   return <button className="grid h-12 place-items-center rounded-xl bg-[#f4f5f5] text-[#566066]">{icon}</button>;
 }
@@ -1299,10 +1415,21 @@ type CustomerPortalData = {
   pendingRequests: ServiceRequest[];
 };
 
-function CustomerPortal({ code }: { code: string }) {
+function CustomerPortal({ code, session, onLogout }: { code: string; session?: AuthSession | null; onLogout?: () => void }) {
   const [data, setData] = useState<CustomerPortalData | null>(null);
   const [error, setError] = useState('');
   const [requesting, setRequesting] = useState('');
+  const customerStorageKey = 'tapfood-customer-' + code.toLowerCase();
+  const [customerForm, setCustomerForm] = useState(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem(customerStorageKey) || '{}') as { name?: string; phone?: string; email?: string };
+    } catch {
+      return {};
+    }
+  });
+  const [customerSaved, setCustomerSaved] = useState(() => Boolean(customerForm.name && customerForm.phone));
+  const [customerSaving, setCustomerSaving] = useState(false);
+  const [customerMessage, setCustomerMessage] = useState('');
   const lastStatuses = useRef<Record<string, string>>({});
 
   const load = async () => {
@@ -1348,6 +1475,28 @@ function CustomerPortal({ code }: { code: string }) {
     }
   };
 
+  const registerCustomer = async (event: FormEvent) => {
+    event.preventDefault();
+    setCustomerSaving(true);
+    setCustomerMessage('');
+    try {
+      const payload = {
+        name: String(customerForm.name || '').trim(),
+        phone: String(customerForm.phone || '').trim(),
+        email: String(customerForm.email || '').trim(),
+      };
+      await api.post('/api/customer/table/' + encodeURIComponent(code) + '/register', payload);
+      window.localStorage.setItem(customerStorageKey, JSON.stringify(payload));
+      setCustomerSaved(true);
+      setCustomerMessage('Cadastro conectado à mesa.');
+      await load();
+    } catch (err) {
+      setCustomerMessage(err instanceof Error ? err.message : 'Não foi possível salvar seus dados.');
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
   if (error) return <div className="grid min-h-screen place-items-center bg-[#f6f5f2] p-6"><div className="max-w-md rounded-2xl bg-white p-6 text-center shadow-lg"><AlertTriangle className="mx-auto text-amber-500" /><h1 className="mt-3 text-lg font-bold">Mesa não encontrada</h1><p className="mt-2 text-sm text-slate-500">{error}</p></div></div>;
   if (!data) return <div className="grid min-h-screen place-items-center bg-[#f6f5f2] text-sm text-slate-400">Conectando à mesa...</div>;
 
@@ -1365,11 +1514,32 @@ function CustomerPortal({ code }: { code: string }) {
           <span className="grid h-10 w-10 place-items-center rounded-full bg-[#f45f3f] text-white"><Utensils size={18} /></span>
           <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · Modo Cliente · acesso limitado</small></div>
           <button onClick={() => void enableNotifications()} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#276584]"><Bell size={14} className="mr-1 inline" />Notificações</button>
+          {onLogout && <button onClick={onLogout} className="grid h-9 w-9 place-items-center rounded-xl border text-slate-500"><LogOut size={15} /></button>}
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl space-y-4 p-4">
         <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] px-3 py-2 text-[10px] text-[#35667d]"><b>Interface do Cliente:</b> acesso limitado à própria mesa, acompanhamento do pedido, notificações e solicitação de atendimento. Caixa, estoque, relatórios e configurações não aparecem nesta interface.</div>
+        <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <small className="text-slate-400">Identificação para avisos</small>
+              <h2 className="font-bold">{customerSaved ? customerForm.name || session?.name || 'Cliente conectado' : 'Complete seu cadastro'}</h2>
+            </div>
+            {customerSaved && <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">Notificações vinculadas</span>}
+          </div>
+          {!customerSaved ? (
+            <form onSubmit={registerCustomer} className="mt-4 grid gap-3 sm:grid-cols-3">
+              <input required value={customerForm.name || ''} onChange={event => setCustomerForm(current => ({ ...current, name: event.target.value }))} placeholder="Nome" className="control" />
+              <input required value={customerForm.phone || ''} onChange={event => setCustomerForm(current => ({ ...current, phone: event.target.value }))} placeholder="Telefone" className="control" />
+              <input type="email" value={customerForm.email || ''} onChange={event => setCustomerForm(current => ({ ...current, email: event.target.value }))} placeholder="E-mail" className="control" />
+              <button disabled={customerSaving} className="rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white sm:col-span-3">{customerSaving ? 'Salvando...' : 'Salvar e receber avisos'}</button>
+            </form>
+          ) : (
+            <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] text-emerald-700">Pedido pronto, mudança de status e solicitações da mesa serão enviadas para o fluxo configurado no n8n quando a integração estiver ativa.</div>
+          )}
+          {customerMessage && <p className="mt-2 text-[10px] text-slate-500">{customerMessage}</p>}
+        </section>
         <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><small className="text-slate-400">Você está conectado em</small><h1 className="text-2xl font-bold">{data.table.name}</h1></div>
@@ -1439,7 +1609,7 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
       role: 'assistant',
       content: mode === 'customer'
         ? 'Olá! Posso ajudar com seu pedido, status da mesa, notificações, chamar o garçom ou solicitar a conta.'
-        : 'Olá! Sou o assistente do sistema. Posso orientar sobre os módulos e também executar testes de diagnóstico no modo Testar Sistema.',
+        : 'Olá! Sou a Central TAPFOOD. Posso orientar sobre os módulos e executar testes de diagnóstico no modo Testar Sistema.',
     },
   ]);
 
@@ -1457,7 +1627,7 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
     setSending(true);
 
     try {
-      const response = await api.post('/api/assistant', {
+      const response = await api.post<{ answer?: string }>('/api/assistant', {
         mode,
         message: text,
         page,
@@ -1516,15 +1686,15 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
           <header className="flex items-center gap-3 border-b border-[#eeeae4] bg-white px-4 py-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#fff0eb] text-[#e85b3a]"><BrainCircuit size={18} /></span>
             <div className="min-w-0 flex-1">
-              <b className="block text-xs">Assistente de IA</b>
-              <small className="block truncate text-[9px] text-slate-400">{mode === 'customer' ? 'Ajuda ao cliente · acesso limitado' : qaMode ? 'Modo Testes / QA · somente leitura' : 'Ajuda operacional · estabelecimento'}</small>
+              <b className="block text-xs">Central TAPFOOD</b>
+              <small className="block truncate text-[9px] text-slate-400">{mode === 'customer' ? 'Ajuda ao cliente · acesso limitado' : qaMode ? 'Testes / QA · somente leitura' : 'Suporte operacional · estabelecimento'}</small>
             </div>
             <button aria-label="Fechar assistente" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X size={16} /></button>
           </header>
 
           {mode === 'establishment' && (
             <div className="grid grid-cols-2 gap-1 border-b border-[#eeeae4] bg-white p-2">
-              <button onClick={() => setQaMode(false)} className={'rounded-lg py-2 text-[9px] font-bold ' + (!qaMode ? 'bg-[#202538] text-white' : 'text-slate-500 hover:bg-slate-50')}>Ajuda IA</button>
+              <button onClick={() => setQaMode(false)} className={'rounded-lg py-2 text-[9px] font-bold ' + (!qaMode ? 'bg-[#202538] text-white' : 'text-slate-500 hover:bg-slate-50')}>Ajuda</button>
               <button onClick={() => setQaMode(true)} className={'flex items-center justify-center gap-1 rounded-lg py-2 text-[9px] font-bold ' + (qaMode ? 'bg-[#f45f3f] text-white' : 'text-slate-500 hover:bg-slate-50')}><ShieldCheck size={13} />Testar Sistema</button>
             </div>
           )}
@@ -1561,7 +1731,7 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
                     }
                   }}
                   rows={1}
-                  placeholder={mode === 'customer' ? 'Dúvida sobre seu pedido...' : 'Como posso usar o sistema?'}
+                  placeholder={mode === 'customer' ? 'Dúvida sobre seu pedido...' : 'Como posso usar o TAPFOOD?'}
                   className="max-h-24 min-h-10 flex-1 resize-none rounded-xl border border-[#dfdcd6] bg-[#faf9f7] px-3 py-2.5 text-[10px] outline-none focus:border-[#e99b88]"
                 />
                 <button aria-label="Enviar mensagem" disabled={!input.trim() || sending} onClick={() => void ask()} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f45f3f] text-white disabled:opacity-40"><Send size={15} /></button>
@@ -1608,12 +1778,12 @@ function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'
       )}
 
       <button
-        aria-label={open ? 'Fechar Assistente de IA' : 'Abrir Assistente de IA'}
+        aria-label={open ? 'Fechar Central TAPFOOD' : 'Abrir Central TAPFOOD'}
         onClick={() => setOpen(value => !value)}
         className="fixed bottom-4 right-3 z-[76] flex h-12 items-center gap-2 rounded-full bg-[#202538] px-3.5 text-white shadow-[0_12px_30px_rgba(32,37,56,.28)] transition hover:-translate-y-0.5 sm:right-4"
       >
         <span className="grid h-7 w-7 place-items-center rounded-full bg-[#f45f3f]"><BrainCircuit size={15} /></span>
-        <span className="hidden pr-1 text-[9px] font-bold sm:block">{mode === 'establishment' ? 'Assistente IA / Testes' : 'Assistente IA'}</span>
+        <span className="hidden pr-1 text-[9px] font-bold sm:block">{mode === 'establishment' ? 'Suporte / Testes' : 'Ajuda TAPFOOD'}</span>
       </button>
     </>
   );
@@ -2048,24 +2218,38 @@ function FinanceView(props: ViewProps) {
 }
 
 function CustomersView(props: ViewProps) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', phone: '', email: '' });
   const create = async () => {
-    const name = prompt('Nome do cliente');
-    if (!name) return;
-    const phone = prompt('Telefone') || '';
-    if (!phone) return;
-    await props.run(() => api.post('/api/customers', { name, phone }), 'Cliente cadastrado.');
+    if (!form.name.trim() || !form.phone.trim()) return;
+    await props.run(() => api.post('/api/customers', form), 'Cliente cadastrado e notificação enviada.');
+    setForm({ name: '', phone: '', email: '' });
+    setOpen(false);
   };
   return (
-    <PageSection title="Clientes / CRM" subtitle="Base de clientes e relacionamento" action="Novo cliente" onAction={create}>
+    <PageSection title="Clientes / CRM" subtitle="Base de clientes e relacionamento" action="Novo cliente" onAction={() => setOpen(true)}>
       <Surface>
         {props.data.customers.filter(customer => !props.search || (customer.name + ' ' + customer.phone).toLowerCase().includes(props.search.toLowerCase())).map(customer => (
           <DataRow key={customer.id}>
             <span className="grid h-9 w-9 place-items-center rounded-full bg-[#fff2ee] text-[10px] font-bold text-[#e85b3a]">{customer.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</span>
-            <span className="flex-1"><b className="block text-xs">{customer.name}</b><small className="text-[10px] text-slate-400">{customer.phone}</small></span>
+            <span className="flex-1"><b className="block text-xs">{customer.name}</b><small className="text-[10px] text-slate-400">{customer.phone}{customer.email ? ' · ' + customer.email : ''}</small></span>
             <span className="text-[10px] text-slate-500">{customer.orders} pedidos</span><b className="text-xs">{BRL(customer.totalSpent)}</b>
           </DataRow>
         ))}
       </Surface>
+      {open && (
+        <Modal title="Novo cliente" onClose={() => setOpen(false)}>
+          <div className="grid gap-3">
+            <Field label="Nome"><input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} className="control" /></Field>
+            <Field label="Telefone"><input value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value })} className="control" /></Field>
+            <Field label="E-mail"><input type="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} className="control" /></Field>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setOpen(false)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Cancelar</button>
+            <button onClick={() => void create()} className="rounded-xl bg-[#f45f3f] px-5 py-3 text-[10px] font-bold text-white">Salvar cliente</button>
+          </div>
+        </Modal>
+      )}
     </PageSection>
   );
 }
@@ -2101,9 +2285,10 @@ type OpenApiKeyInfo = {
   createdAt: string;
 };
 
-type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'open-api';
+type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'marketing' | 'print' | 'tools' | 'open-api';
 
 const integrationCatalog = [
+  { id: 'n8n', name: 'n8n / WhatsApp', category: 'Automação', description: 'Webhook para avisar cliente e operação sobre cadastro, mesa, pedido pronto e mudança de status.', badge: 'Webhook', icon: MessageCircle },
   { id: 'pix-auto', name: 'Pix Automático', category: 'Pagamentos', description: 'Estrutura para recebimento e conciliação automática de pagamentos via Pix.', badge: 'Provedor externo', icon: QrCode },
   { id: 'ifood', name: 'iFood', category: 'Marketplaces', description: 'Centralize pedidos, códigos PDV e sincronização operacional do marketplace.', badge: 'Autorização oficial', icon: ShoppingBag },
   { id: '99food', name: '99Food', category: 'Marketplaces', description: 'Receba pedidos da loja 99Food no gestor e concentre a operação.', badge: 'Autorização oficial', icon: Bike },
@@ -2135,6 +2320,7 @@ function SettingsView(props: ViewProps) {
   const [apiKeys, setApiKeys] = useState<OpenApiKeyInfo[]>([]);
   const [newApiKey, setNewApiKey] = useState('');
   const [apiKeyName, setApiKeyName] = useState('Integração principal');
+  const [printMessage, setPrintMessage] = useState('');
 
   const saveGeneral = async () => {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
@@ -2180,6 +2366,7 @@ function SettingsView(props: ViewProps) {
 
   const fieldSpec = (id: string) => {
     const commonStore = [{ key: 'storeId', label: 'ID da loja / estabelecimento', placeholder: 'Informe o ID fornecido pelo parceiro' }];
+    if (id === 'n8n') return [{ key: 'webhookUrl', label: 'Webhook n8n', placeholder: 'https://seu-n8n/webhook/tapfood' }, { key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' }];
     if (id === 'ifood') return [...commonStore, { key: 'merchantId', label: 'Merchant ID', placeholder: 'ID comercial do iFood' }, { key: 'syncMode', label: 'Sincronização', placeholder: 'Pedidos, status, cardápio' }];
     if (id === '99food' || id === 'keeta') return commonStore;
     if (id === 'google-analytics') return [{ key: 'measurementId', label: 'ID de mensuração GA4', placeholder: 'G-XXXXXXXXXX' }];
@@ -2218,7 +2405,7 @@ function SettingsView(props: ViewProps) {
     setIntegrationBusy(true);
     setIntegrationMessage('');
     try {
-      const response = await api.post('/api/integrations/' + selectedIntegration + '/test', {});
+      const response = await api.post<{ message?: string }>('/api/integrations/' + selectedIntegration + '/test', {});
       setIntegrationMessage(String(response.data?.message || 'Teste concluído.'));
       await loadIntegrations();
     } catch {
@@ -2230,7 +2417,7 @@ function SettingsView(props: ViewProps) {
 
   const createApiKey = async () => {
     if (!apiKeyName.trim()) return;
-    const response = await api.post('/api/open/v1/keys', { name: apiKeyName.trim() });
+    const response = await api.post<{ key?: string }>('/api/open/v1/keys', { name: apiKeyName.trim() });
     setNewApiKey(String(response.data?.key || ''));
     await loadApiKeys();
   };
@@ -2239,6 +2426,16 @@ function SettingsView(props: ViewProps) {
     if (!confirm('Revogar esta chave da API?')) return;
     await api.delete('/api/open/v1/keys/' + id);
     await loadApiKeys();
+  };
+
+  const testPrinter = async (station: string) => {
+    setPrintMessage('');
+    try {
+      const response = await api.post<{ message?: string }>('/api/printers/test', { station });
+      setPrintMessage(String(response.data?.message || 'Teste enviado.'));
+    } catch {
+      setPrintMessage('Não foi possível executar o teste de impressão.');
+    }
   };
 
   const routeTile = (target: Page) => () => props.setPage(target);
@@ -2250,7 +2447,7 @@ function SettingsView(props: ViewProps) {
       <section>
         <SettingsBack title="Integrações" onBack={showHub} subtitle="Conectores, performance, operação e API aberta" />
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {['Todas', 'Marketplaces', 'Pagamentos', 'Operação', 'Logística', 'Performance'].map(category => (
+          {['Todas', 'Automação', 'Marketplaces', 'Pagamentos', 'Operação', 'Logística', 'Performance'].map(category => (
             <button key={category} onClick={() => setFilter(category)} className={'whitespace-nowrap rounded-full border px-4 py-2 text-[10px] font-semibold ' + (filter === category ? 'border-[#159fe5] bg-[#eef8fd] text-[#107db2]' : 'border-[#d9dde0] bg-white text-[#586066]')}>{category}</button>
           ))}
         </div>
@@ -2313,7 +2510,7 @@ function SettingsView(props: ViewProps) {
     const origin = apiBaseUrl || window.location.origin;
     return (
       <section>
-        <SettingsBack title="API Aberta + Webhooks" onBack={() => setSection('integrations')} subtitle="Integre sistemas externos ao Mesa Restaurant OS" />
+        <SettingsBack title="API Aberta + Webhooks" onBack={() => setSection('integrations')} subtitle="Integre sistemas externos ao TAPFOOD" />
         <div className="grid gap-4 xl:grid-cols-[1fr_.9fr]">
           <Surface>
             <SectionHead title="Chaves de API" subtitle="A chave completa é exibida somente no momento da criação." />
@@ -2342,6 +2539,106 @@ function SettingsView(props: ViewProps) {
             <ApiEndpoint method="POST" path={origin + '/api/open/v1/orders'} note="Criar pedido por integração" />
             <div className="mt-4 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[9px] leading-4 text-[#35667d]"><b>Webhooks:</b> conectores externos podem enviar pedidos para o endpoint POST de pedidos usando uma chave própria. A API valida os produtos e calcula os valores com o cadastro interno.</div>
           </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'access') {
+    const sampleTable = props.data.tables[0]?.name || 'Mesa 01';
+    const customerUrl = window.location.origin + '/?cliente=' + encodeURIComponent(sampleTable);
+    return (
+      <section>
+        <SettingsBack title="Acessos" onBack={showHub} subtitle="Entrada da empresa e acesso do cliente por mesa" />
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Surface>
+            <SectionHead title="Empresa" subtitle="Perfil administrativo do estabelecimento" />
+            <div className="grid gap-3">
+              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · acesso total</small></span><Badge value="Ativo" /></DataRow>
+              <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Use o botão Sair para voltar à tela de entrada e testar os perfis Empresa e Cliente.</div>
+              <button onClick={props.onLogout} className="w-fit rounded-xl bg-[#202538] px-4 py-3 text-[10px] font-bold text-white">Sair da empresa</button>
+            </div>
+          </Surface>
+          <Surface>
+            <SectionHead title="Clientes por mesa" subtitle="Acesso limitado ao pedido e atendimento" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Mesa de exemplo"><input readOnly value={sampleTable} className="control" /></Field>
+              <Field label="Senha da mesa"><input readOnly value={tableLoginPassword(sampleTable)} className="control" /></Field>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => void navigator.clipboard.writeText(customerUrl)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link cliente</button>
+              <button onClick={() => setSection('integrations')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Configurar n8n</button>
+            </div>
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'marketing') {
+    return (
+      <section>
+        <SettingsBack title="Fidelidade, Cupons e Cashback" onBack={showHub} subtitle="Relacionamento conectado ao CRM" />
+        <div className="grid gap-4 xl:grid-cols-3">
+          <Surface>
+            <SectionHead title="Fidelidade" subtitle="Programa por recorrência" />
+            <SettingToggle icon={<Heart size={16} />} title="Programa ativo" subtitle="Cliente ganha benefícios por retorno." enabled={props.settingsForm.loyaltyEnabled} onClick={() => toggle('loyaltyEnabled')} />
+            <button onClick={() => void saveGeneral()} className="mt-4 rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar fidelidade</button>
+          </Surface>
+          <Surface>
+            <SectionHead title="Cupons" subtitle="Regras promocionais rápidas" />
+            <DataRow><Gift size={17} className="text-[#f45f3f]" /><span className="flex-1"><b className="block text-xs">Volta10</b><small className="text-[10px] text-slate-400">Modelo pronto para campanhas no CRM</small></span><Badge value="Ativo" /></DataRow>
+            <DataRow><BadgePercent size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">Primeiro pedido</b><small className="text-[10px] text-slate-400">Aplicável em cardápio digital</small></span><Badge value="Configurado" /></DataRow>
+          </Surface>
+          <Surface>
+            <SectionHead title="Cashback" subtitle="Diferencial para retenção" />
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] leading-4 text-emerald-700">Base pronta para campanhas por cliente, mesa e histórico de compra. Eventos podem sair pelo n8n para WhatsApp quando o pedido muda de etapa.</div>
+            <button onClick={() => setSection('integrations')} className="mt-4 rounded-xl bg-[#202538] px-4 py-3 text-[10px] font-bold text-white">Automatizar mensagens</button>
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'print') {
+    return (
+      <section>
+        <SettingsBack title="Impressoras" onBack={showHub} subtitle="Setores de impressão e teste operacional" />
+        <div className="grid gap-4 xl:grid-cols-[1fr_.8fr]">
+          <Surface>
+            <SectionHead title="Configuração por setor" subtitle="Defina o destino de cada comanda" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Cozinha"><input value={props.settingsForm.kitchenPrinter} onChange={event => props.setSettingsForm({ ...props.settingsForm, kitchenPrinter: event.target.value })} className="control" /></Field>
+              <Field label="Balcão"><input value={props.settingsForm.counterPrinter} onChange={event => props.setSettingsForm({ ...props.settingsForm, counterPrinter: event.target.value })} className="control" /></Field>
+              <Field label="Bar"><input value={props.settingsForm.barPrinter} onChange={event => props.setSettingsForm({ ...props.settingsForm, barPrinter: event.target.value })} className="control" /></Field>
+              <Field label="Cópias"><input type="number" min="1" max="5" value={props.settingsForm.printCopies} onChange={event => props.setSettingsForm({ ...props.settingsForm, printCopies: Number(event.target.value) })} className="control" /></Field>
+            </div>
+            <div className="mt-3"><SettingToggle icon={<Printer size={16} />} title="Impressão automática" subtitle="Envia comandas ao criar ou mudar pedido." enabled={props.settingsForm.autoPrint} onClick={() => toggle('autoPrint')} /></div>
+            <button onClick={() => void saveGeneral()} className="mt-4 rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar impressoras</button>
+          </Surface>
+          <Surface>
+            <SectionHead title="Teste de impressão" subtitle="Valida comunicação e gera evento operacional" />
+            <div className="grid gap-2">
+              {[props.settingsForm.kitchenPrinter, props.settingsForm.counterPrinter, props.settingsForm.barPrinter].filter(Boolean).map(station => (
+                <button key={station} onClick={() => void testPrinter(station)} className="flex items-center gap-2 rounded-xl border border-[#e1e4e6] bg-white px-4 py-3 text-left text-[10px] font-bold"><Printer size={15} className="text-[#159fe5]" />Testar {station}</button>
+              ))}
+            </div>
+            {printMessage && <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] text-[#35667d]">{printMessage}</div>}
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'tools') {
+    return (
+      <section>
+        <SettingsBack title="Diagnóstico TAPFOOD" onBack={showHub} subtitle="Atalhos para validar a operação" />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <PromoCard icon={<ShieldCheck size={19} />} title="Teste completo" subtitle="Abra a Central TAPFOOD no canto inferior e execute a verificação geral." action="Abrir central" onClick={() => window.scrollTo({ top: document.body.scrollHeight })} />
+          <PromoCard icon={<Package size={19} />} title="Produtos com foto" subtitle="Complete imagens e disponibilidade do cardápio." action="Ver produtos" onClick={routeTile('products')} />
+          <PromoCard icon={<Boxes size={19} />} title="Estoque mínimo" subtitle="Ajuste insumos que estiverem no limite." action="Ver estoque" onClick={routeTile('stock')} />
+          <PromoCard icon={<Printer size={19} />} title="Impressoras" subtitle="Teste cozinha, balcão e bar." action="Configurar" onClick={() => setSection('print')} />
         </div>
       </section>
     );
@@ -2432,7 +2729,7 @@ function SettingsView(props: ViewProps) {
         <PromoCard icon={<Plug size={19} />} title="Central de Integrações" subtitle="Marketplaces, pagamentos, logística e performance." action="Configurar" onClick={() => setSection('integrations')} />
         <PromoCard icon={<KeyRound size={19} />} title="API Aberta" subtitle="Chaves REST para sistemas e automações externas." action="Gerenciar API" onClick={() => setSection('open-api')} />
         <PromoCard icon={<Store size={19} />} title="Totem e KDS" subtitle="Autoatendimento e produção conectados." action="Ver integrações" onClick={() => setSection('integrations')} />
-        <PromoCard icon={<BrainCircuit size={19} />} title="Assistente IA" subtitle="Ajuda operacional dentro do sistema." action="Já disponível" onClick={() => alert('O Assistente de IA está disponível no canto inferior direito.')} />
+        <PromoCard icon={<ShieldCheck size={19} />} title="Diagnóstico do Sistema" subtitle="Testes, alertas e rotinas de produção." action="Ver diagnóstico" onClick={() => setSection('tools')} />
       </div>
 
       <SettingsGroup title="Cadastros">
@@ -2442,12 +2739,12 @@ function SettingsView(props: ViewProps) {
         <AjusteTile icon={<Layers3 size={29} />} title="Categorias" onClick={routeTile('menu')} />
         <AjusteTile icon={<Users size={29} />} title="Clientes" onClick={routeTile('customers')} />
         <AjusteTile icon={<CreditCard size={29} />} title="Formas de pagamento" onClick={() => setSection('payments')} />
-        <AjusteTile icon={<Heart size={29} />} title="Fidelidade" onClick={() => setSection('general')} />
-        <AjusteTile icon={<Gift size={29} />} title="Cupons" onClick={() => alert('Cupons ficam vinculados ao módulo de Fidelidade/CRM. A estrutura está preparada para a próxima etapa de regras promocionais.')} />
-        <AjusteTile icon={<Printer size={29} />} title="Categorias de impressão" onClick={() => setSection('general')} />
-        <AjusteTile icon={<UserCog size={29} />} title="Usuários" onClick={() => alert('Perfis de usuário serão vinculados ao controle de acesso do estabelecimento.')} />
+        <AjusteTile icon={<Heart size={29} />} title="Fidelidade" onClick={() => setSection('marketing')} />
+        <AjusteTile icon={<Gift size={29} />} title="Cupons" onClick={() => setSection('marketing')} />
+        <AjusteTile icon={<Printer size={29} />} title="Categorias de impressão" onClick={() => setSection('print')} />
+        <AjusteTile icon={<UserCog size={29} />} title="Usuários" onClick={() => setSection('access')} />
         <AjusteTile icon={<Plug size={29} />} title="Integrações" onClick={() => setSection('integrations')} />
-        <AjusteTile icon={<BadgePercent size={29} />} title="Programa de Cashback" onClick={() => setSection('general')} />
+        <AjusteTile icon={<BadgePercent size={29} />} title="Programa de Cashback" onClick={() => setSection('marketing')} />
       </SettingsGroup>
 
       <SettingsGroup title="Delivery">
@@ -2465,12 +2762,14 @@ function SettingsView(props: ViewProps) {
 
       <SettingsGroup title="Configurações">
         <AjusteTile icon={<Settings size={29} />} title="Geral" onClick={() => setSection('general')} />
+        <AjusteTile icon={<UserCog size={29} />} title="Acessos" onClick={() => setSection('access')} />
+        <AjusteTile icon={<Printer size={29} />} title="Impressoras" onClick={() => setSection('print')} />
         <AjusteTile icon={<KeyRound size={29} />} title="API Aberta" onClick={() => setSection('open-api')} />
       </SettingsGroup>
 
       <SettingsGroup title="Outros">
         <AjusteTile icon={<ReceiptText size={29} />} title="Meus Pagamentos" onClick={() => setSection('payments')} />
-        <AjusteTile icon={<LogOut size={29} />} title="Sair" onClick={() => alert('Sessão administrativa mantida neste ambiente de demonstração.')} />
+        <AjusteTile icon={<LogOut size={29} />} title="Sair" onClick={props.onLogout} />
       </SettingsGroup>
     </section>
   );
@@ -2526,8 +2825,4 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return <div className="rounded-lg bg-[#f7f8fa] p-4"><span className="block text-[9px] text-slate-400">{label}</span><b className="mt-1 block text-sm">{value}</b></div>;
-}
-
-function Preference({ icon, title, value }: { icon: ReactNode; title: string; value: string }) {
-  return <div className="flex items-center gap-3 border-t border-[#f0f0f4] py-3 first:border-t-0"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#e85b3a]">{icon}</span><span className="flex-1 text-xs font-semibold">{title}</span><b className="text-[10px] text-emerald-600">{value}</b></div>;
 }

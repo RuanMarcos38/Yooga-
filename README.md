@@ -1,10 +1,10 @@
-# Mesa Restaurant OS
+# TAPFOOD
 
 SaaS completo para operação de restaurantes, desenvolvido com frontend React/Vite e backend persistente.
 
 ## Prévia online
 
-https://mesa-restaurant-os-a11fav.v2.appdeploy.ai/
+https://tapfood.com.br/
 
 ## Layout
 

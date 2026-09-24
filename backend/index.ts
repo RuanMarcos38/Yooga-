@@ -50,6 +50,10 @@ type AppSettings = {
   deliveryMinimum: number;
   freeDeliveryFrom: number;
   openingHours: string;
+  kitchenPrinter: string;
+  counterPrinter: string;
+  barPrinter: string;
+  printCopies: number;
 };
 
 type T = {
@@ -81,6 +85,7 @@ type C = {
   id: string;
   name: string;
   phone: string;
+  email?: string;
   orders: number;
   totalSpent: number;
   lastOrder: string;
@@ -122,8 +127,8 @@ type S = {
 const tableStatusValues: T['status'][] = ['Livre', 'Ocupada', 'Aguardando', 'Fechamento'];
 
 const defaultSettings = (): AppSettings => ({
-  restaurantName: 'Mesa Restaurante',
-  unit: 'Unidade Centro',
+  restaurantName: 'TAPFOOD',
+  unit: 'Unidade Principal',
   serviceFee: 10,
   automaticServiceFee: true,
   qrMenuEnabled: true,
@@ -142,6 +147,10 @@ const defaultSettings = (): AppSettings => ({
   deliveryMinimum: 20,
   freeDeliveryFrom: 80,
   openingHours: '11:00 às 23:00',
+  kitchenPrinter: 'Cozinha',
+  counterPrinter: 'Balcão',
+  barPrinter: 'Bar',
+  printCopies: 1,
 });
 
 const defaultCategories = (): MenuCategory[] => [
@@ -160,6 +169,26 @@ const defaultTables = (): T[] => Array.from({ length: 40 }, (_, index) => ({
   total: index === 0 ? 86.7 : index === 1 ? 49.8 : index === 4 ? 129.4 : 0,
   waiter: index === 0 ? 'Marina' : index === 1 ? 'João' : index === 4 ? 'Carlos' : undefined,
 }));
+
+const productImages: Record<string, string> = {
+  p1: 'https://images.unsplash.com/photo-1559067933-0293effe6133?auto=format&fit=crop&w=900&q=82',
+  p2: 'https://images.unsplash.com/photo-1674073117843-5838b44b7ae0?auto=format&fit=crop&w=900&q=82',
+  p3: 'https://images.unsplash.com/photo-1603360946369-dc9bb6258143?auto=format&fit=crop&w=900&q=82',
+  p4: 'https://images.unsplash.com/photo-1633633514326-2064746ad5b6?auto=format&fit=crop&w=900&q=82',
+  p5: 'https://images.unsplash.com/photo-1527661591475-527312dd65f5?auto=format&fit=crop&w=900&q=82',
+  p6: 'https://images.unsplash.com/photo-1527661591475-527312dd65f5?auto=format&fit=crop&w=900&q=82&sat=-8',
+  p7: 'https://images.unsplash.com/photo-1702827402870-7c33dc7b67be?auto=format&fit=crop&w=900&q=82',
+  p8: 'https://images.unsplash.com/photo-1565553642973-6afe791aee33?auto=format&fit=crop&w=900&q=82',
+};
+
+function defaultProductImage(product: Partial<P>) {
+  if (product.id && productImages[product.id]) return productImages[product.id];
+  const value = ((product.category || '') + ' ' + (product.name || '')).toLowerCase();
+  if (value.includes('bebida') || value.includes('coca') || value.includes('suco')) return productImages.p5;
+  if (value.includes('sobremesa') || value.includes('brownie')) return productImages.p7;
+  if (value.includes('batata') || value.includes('porção') || value.includes('porcao')) return productImages.p3;
+  return productImages.p2;
+}
 
 const seed = (): S => ({
   settings: defaultSettings(),
@@ -186,6 +215,7 @@ const seed = (): S => ({
     channels: ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
     addons: [],
     ingredients: [],
+    imageUrl: productImages[String(value[0])] || '',
   })),
   tables: defaultTables(),
   orders: [
@@ -239,6 +269,7 @@ const seed = (): S => ({
     id: String(value[0]),
     name: String(value[1]),
     phone: String(value[2]),
+    email: '',
     orders: Number(value[3]),
     totalSpent: Number(value[4]),
     lastOrder: String(value[5]),
@@ -246,7 +277,7 @@ const seed = (): S => ({
   stock: [
     ['s1', 'Pão brioche', 'un', 82, 40, 2.1],
     ['s2', 'Carne bovina 160g', 'un', 38, 30, 8.4],
-    ['s3', 'Bacon fatiado', 'kg', 4.2, 5, 31.8],
+    ['s3', 'Bacon fatiado', 'kg', 8.2, 5, 31.8],
     ['s4', 'Batata congelada', 'kg', 12.5, 8, 14.2],
     ['s5', 'Coca-Cola lata', 'un', 96, 48, 3.85],
   ].map(value => ({
@@ -335,6 +366,7 @@ function normalizeState(raw: Partial<S>): S {
       channels: product.channels ?? ['Mesa', 'Balcão', 'Delivery', 'QR/Totem'],
       addons: product.addons ?? [],
       ingredients: product.ingredients ?? [],
+      imageUrl: product.imageUrl || product.imagePath ? product.imageUrl : defaultProductImage(product),
     })),
     menuCategories: raw.menuCategories?.length ? raw.menuCategories : base.menuCategories,
     tables: normalizeTables(raw.tables),
@@ -342,7 +374,7 @@ function normalizeState(raw: Partial<S>): S {
       updatedAt: order.createdAt,
       ...order,
     })),
-    customers: raw.customers || base.customers,
+    customers: (raw.customers || base.customers).map(customer => ({ ...customer, email: customer.email || '' })),
     stock: raw.stock || base.stock,
     transactions: raw.transactions || base.transactions,
     cashRegister: raw.cashRegister || base.cashRegister,
@@ -408,6 +440,22 @@ function tableFromCode(state: S, code: string) {
   return state.tables.find(table => table.name.toLowerCase() === normalized);
 }
 
+function tableLoginPassword(tableName: string) {
+  return 'mesa' + (tableName.match(/\d+/)?.[0] || '01').padStart(2, '0');
+}
+
+function signSession(payload: Record<string, unknown>) {
+  const base = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = createHash('sha256').update(base + (process.env.AUTH_SECRET || 'tapfood-auth-secret')).digest('base64url');
+  return base + '.' + signature;
+}
+
+function authSession(payload: { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string }) {
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
+  const session = { ...payload, expiresAt };
+  return { ...session, token: signSession(session) };
+}
+
 function applyProduct(product: P, value: Partial<P>): P {
   return {
     ...product,
@@ -447,6 +495,7 @@ type OpenApiKeyRecord = {
 };
 
 const integrationIds = [
+  'n8n',
   'pix-auto', 'ifood', '99food', 'keeta', 'wallet-pay', 'pos', 'totem', 'zapturbo',
   'boletim', 'kds', 'driver-app', 'foody-delivery', 'meta-capi', 'custom-domain',
   'google-analytics', 'google-tag-manager', 'facebook-pixel', 'open-api',
@@ -541,6 +590,7 @@ async function validateOpenApiKey(event: any) {
 }
 
 function validateIntegration(providerId: string, fields: Record<string, string>) {
+  if (providerId === 'n8n') return /^https?:\/\/.+/i.test(fields.webhookUrl || '') ? 'active' : 'invalid';
   if (providerId === 'google-analytics') return /^G-[A-Z0-9]+$/i.test(fields.measurementId || '') ? 'active' : 'invalid';
   if (providerId === 'google-tag-manager') return /^GTM-[A-Z0-9]+$/i.test(fields.containerId || '') ? 'active' : 'invalid';
   if (providerId === 'facebook-pixel') return /^\d{8,25}$/.test(fields.pixelId || '') ? 'active' : 'invalid';
@@ -548,6 +598,39 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   if (providerId === 'totem' || providerId === 'kds') return 'active';
   if (externalCredentialIntegrations.has(providerId)) return Object.values(fields).some(Boolean) ? 'credentials' : 'invalid';
   return 'configured';
+}
+
+async function notifyN8n(state: S, event: string, payload: Record<string, unknown>) {
+  try {
+    const integrations = await listIntegrationConfigs();
+    const n8n = integrations.find(item => item.id === 'n8n');
+    const webhookUrl = n8n?.fields?.webhookUrl;
+    if (!n8n?.enabled || !webhookUrl || n8n.status === 'Erro') return;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system: 'TAPFOOD',
+          event,
+          occurredAt: new Date().toISOString(),
+          store: {
+            restaurantName: state.settings.restaurantName,
+            unit: state.settings.unit,
+          },
+          payload,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    console.error('n8n notification failed', err);
+  }
 }
 
 const allowedOrderStatuses = new Set(['Novo', 'Preparando', 'Pronto', 'Entregue', 'Finalizado', 'Cancelado']);
@@ -653,10 +736,41 @@ function transactionTimestamp(state: S, tx: Tx) {
 export const handler = router({
   'GET /api/_healthcheck': [async () => json({
     message: 'Success',
-    service: 'Mesa Restaurant OS Backend',
+    service: 'TAPFOOD Backend',
     version: '2026.09.20',
-    modules: ['state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'integrations', 'open-api', 'qa', 'ai'],
+    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
   })],
+
+  'POST /api/auth/login': [async ({ body }) => {
+    const value = body as { mode?: 'empresa' | 'cliente'; email?: string; password?: string; table?: string };
+    const password = String(value.password || '').trim();
+
+    if (value.mode === 'cliente') {
+      const current = await get();
+      const table = tableFromCode(current.state, value.table || 'Mesa 01');
+      if (!table) return error('Mesa não encontrada', 404);
+      if (password.toLowerCase() !== tableLoginPassword(table.name)) return error('Senha da mesa inválida', 401);
+      return json(authSession({
+        mode: 'cliente',
+        name: table.name,
+        role: 'Cliente',
+        tableCode: table.name,
+      }));
+    }
+
+    const adminEmail = (process.env.ADMIN_EMAIL || 'admin@tapfood.com.br').toLowerCase();
+    const adminPassword = process.env.ADMIN_PASSWORD || 'TapFood@2026';
+    if (String(value.email || '').trim().toLowerCase() !== adminEmail || password !== adminPassword) {
+      return error('Credenciais inválidas', 401);
+    }
+
+    return json(authSession({
+      mode: 'empresa',
+      name: 'Administrador TAPFOOD',
+      role: 'Administrador',
+      email: adminEmail,
+    }));
+  }],
 
   'GET /api/integrations': [async () => json(await listIntegrationConfigs())],
 
@@ -770,7 +884,7 @@ export const handler = router({
     return json({ revoked: true });
   }],
 
-  'GET /api/open/v1/health': [async () => json({ status: 'ok', service: 'Mesa Restaurant OS Open API', version: 'v1' })],
+  'GET /api/open/v1/health': [async () => json({ status: 'ok', service: 'TAPFOOD Open API', version: 'v1' })],
 
   'GET /api/open/v1/menu': [async ({ event }) => {
     if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
@@ -832,6 +946,7 @@ export const handler = router({
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido recebido pela API aberta', order.code + ' · ' + order.channel);
     await save(current.id, current.state);
+    await notifyN8n(current.state, 'order.created_from_api', { order });
     return json(order, 201);
   }],
 
@@ -963,6 +1078,17 @@ export const handler = router({
           : lowStock.length > 0
             ? lowStock.length + ' item(ns) estão no mínimo ou abaixo do mínimo.'
             : 'Nenhum item está abaixo do estoque mínimo.'
+      );
+
+      const printersConfigured = [state.settings.kitchenPrinter, state.settings.counterPrinter, state.settings.barPrinter].every(item => String(item || '').trim());
+      add(
+        'printer-config',
+        'Impressoras',
+        printersConfigured && state.settings.printCopies >= 1 ? 'pass' : 'warn',
+        'Configuração de impressão',
+        printersConfigured
+          ? 'Setores de cozinha, balcão e bar estão configurados com ' + state.settings.printCopies + ' cópia(s).'
+          : 'Informe as impressoras/setores antes de ativar impressão automática.'
       );
 
       const invalidTransactions = state.transactions.filter(tx => tx.amount <= 0 || !['Entrada', 'Saída'].includes(tx.type));
@@ -1124,8 +1250,8 @@ export const handler = router({
     ].join('\n');
 
     const system = mode === 'customer'
-      ? `Você é o Assistente de IA do Modo Cliente do Mesa Restaurant OS. Responda em português do Brasil, de forma curta, clara e acolhedora. Nunca invente status, preço, prazo ou ação que não esteja no contexto. Não execute ações. Sua função é explicar como usar a interface do cliente. Regras e recursos permitidos:\n${customerGuide}\nMesa atual: ${value.table || 'não informada'}.`
-      : `Você é o Assistente de IA operacional do Mesa Restaurant OS. Responda em português do Brasil, com instruções práticas, curtas e passo a passo. Ajude o estabelecimento a usar o sistema sem inventar recursos que não existem e sem afirmar que executou ações. Quando for útil, indique o nome exato do módulo. Recursos atuais:\n${establishmentGuide}\nTela atual: ${value.page || 'não informada'}.`;
+      ? `Você é a Central TAPFOOD do Modo Cliente. Responda em português do Brasil, de forma curta, clara e acolhedora. Nunca invente status, preço, prazo ou ação que não esteja no contexto. Não execute ações. Sua função é explicar como usar a interface do cliente. Regras e recursos permitidos:\n${customerGuide}\nMesa atual: ${value.table || 'não informada'}.`
+      : `Você é a Central TAPFOOD operacional. Responda em português do Brasil, com instruções práticas, curtas e passo a passo. Ajude o estabelecimento a usar o sistema sem inventar recursos que não existem e sem afirmar que executou ações. Quando for útil, indique o nome exato do módulo. Recursos atuais:\n${establishmentGuide}\nTela atual: ${value.page || 'não informada'}.`;
 
     try {
       const response = await ai.generate({
@@ -1166,6 +1292,45 @@ export const handler = router({
     });
   }],
 
+  'POST /api/customer/table/:code/register': [async ({ params, body }) => {
+    const value = body as Partial<C>;
+    if (!value.name?.trim() || !value.phone?.trim()) return error('Nome e telefone obrigatórios', 400);
+    const normalizedPhone = value.phone.replace(/\D/g, '');
+    if (normalizedPhone.length < 10 || normalizedPhone.length > 13) return error('Telefone inválido', 400);
+    const email = String(value.email || '').trim().toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+
+    const current = await get();
+    const table = tableFromCode(current.state, params.code);
+    if (!table) return error('Mesa não encontrada', 404);
+
+    let customer = current.state.customers.find(item => item.phone.replace(/\D/g, '') === normalizedPhone);
+    if (!customer) {
+      customer = {
+        id: 'c' + Date.now(),
+        name: value.name.trim().slice(0, 120),
+        phone: value.phone.trim().slice(0, 30),
+        email,
+        orders: 0,
+        totalSpent: 0,
+        lastOrder: 'Sem pedidos',
+      };
+      current.state.customers.unshift(customer);
+    } else {
+      customer.name = value.name.trim().slice(0, 120);
+      customer.email = email || customer.email || '';
+    }
+
+    current.state.orders
+      .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      .forEach(order => { order.customer = customer!.name; });
+
+    audit(current.state, 'customer', customer.id, 'Cliente conectado à mesa', customer.name + ' · ' + table.name, 'Cliente');
+    await save(current.id, current.state);
+    await notifyN8n(current.state, 'customer.registered', { customer, table });
+    return json(customer, 201);
+  }],
+
   'POST /api/customer/table/:code/request': [async ({ params, body }) => {
     const value = body as { type?: 'waiter' | 'bill' };
     if (!value.type || !['waiter', 'bill'].includes(value.type)) return error('Solicitação inválida', 400);
@@ -1184,6 +1349,7 @@ export const handler = router({
     current.state.serviceRequests.unshift(request);
     audit(current.state, 'table', table.id, value.type === 'bill' ? 'Conta solicitada pelo cliente' : 'Garçom solicitado pelo cliente', table.name, 'Cliente');
     await save(current.id, current.state);
+    await notifyN8n(current.state, 'table.customer_request', { request, table });
     return json(request, 201);
   }],
 
@@ -1195,6 +1361,7 @@ export const handler = router({
     request.resolvedAt = new Date().toISOString();
     audit(current.state, 'table', request.table, 'Solicitação atendida', (request.type === 'bill' ? 'Conta' : 'Garçom') + ' · ' + request.table);
     await save(current.id, current.state);
+    await notifyN8n(current.state, 'table.request_resolved', { request });
     return json(request);
   }],
 
@@ -1396,6 +1563,7 @@ export const handler = router({
     if (value.status === 'Ocupada' && !table.waiter) table.waiter = 'Equipe';
     audit(current.state, 'table', table.id, 'Status da mesa alterado', table.name + ' · ' + value.status);
     await save(current.id, current.state);
+    await notifyN8n(current.state, 'table.status_changed', { table });
     return json(table);
   }],
 
@@ -1430,6 +1598,7 @@ export const handler = router({
     };
     applyOrderEffects(current.state, order);
     await save(current.id, current.state);
+    await notifyN8n(current.state, 'order.created', { order });
     return json(order, 201);
   }],
 
@@ -1451,6 +1620,7 @@ export const handler = router({
     }
     audit(current.state, 'order', order.id, 'Status do pedido alterado', order.code + ' · ' + value.status);
     await save(current.id, current.state);
+    await notifyN8n(current.state, value.status === 'Pronto' ? 'order.ready' : 'order.status_changed', { order });
     return json(order);
   }],
 
@@ -1460,17 +1630,22 @@ export const handler = router({
     const current = await get();
     const normalizedPhone = value.phone.replace(/\D/g, '');
     if (normalizedPhone.length < 10 || normalizedPhone.length > 13) return error('Telefone inválido', 400);
+    const email = String(value.email || '').trim().toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
     if (current.state.customers.some(item => item.phone.replace(/\D/g, '') === normalizedPhone)) return error('Telefone já cadastrado', 409);
     const customer: C = {
       id: 'c' + Date.now(),
       name: value.name.trim().slice(0, 120),
       phone: value.phone.trim().slice(0, 30),
+      email,
       orders: 0,
       totalSpent: 0,
       lastOrder: 'Sem pedidos',
     };
     current.state.customers.unshift(customer);
+    audit(current.state, 'customer', customer.id, 'Cliente cadastrado', customer.name + ' · ' + customer.phone);
     await save(current.id, current.state);
+    await notifyN8n(current.state, 'customer.created', { customer });
     return json(customer, 201);
   }],
 
@@ -1486,6 +1661,17 @@ export const handler = router({
     item.current = next;
     await save(current.id, current.state);
     return json(item);
+  }],
+
+  'POST /api/printers/test': [async ({ body }) => {
+    const value = body as { station?: string };
+    const station = String(value.station || '').trim().slice(0, 80);
+    if (!station) return error('Impressora/setor obrigatório', 400);
+    const current = await get();
+    audit(current.state, 'printer', station, 'Teste de impressão', 'Comanda de teste enviada para ' + station);
+    await save(current.id, current.state);
+    await notifyN8n(current.state, 'printer.test', { station, copies: current.state.settings.printCopies });
+    return json({ ok: true, message: 'Teste registrado para ' + station + '.' });
   }],
 
   'POST /api/transactions': [async ({ body }) => {
@@ -1518,6 +1704,7 @@ export const handler = router({
     if (value.deliveryMinimum !== undefined && (!Number.isFinite(Number(value.deliveryMinimum)) || Number(value.deliveryMinimum) < 0)) return error('Pedido mínimo inválido', 400);
     if (value.freeDeliveryFrom !== undefined && (!Number.isFinite(Number(value.freeDeliveryFrom)) || Number(value.freeDeliveryFrom) < 0)) return error('Frete grátis inválido', 400);
     if (value.openingHours !== undefined && value.openingHours.length > 120) return error('Horário de funcionamento inválido', 400);
+    if (value.printCopies !== undefined && (!Number.isFinite(Number(value.printCopies)) || Number(value.printCopies) < 1 || Number(value.printCopies) > 5)) return error('Cópias de impressão inválidas', 400);
     const current = await get();
     current.state.settings = {
       ...current.state.settings,
@@ -1528,6 +1715,10 @@ export const handler = router({
       deliveryMinimum: value.deliveryMinimum === undefined ? current.state.settings.deliveryMinimum : Number(value.deliveryMinimum),
       freeDeliveryFrom: value.freeDeliveryFrom === undefined ? current.state.settings.freeDeliveryFrom : Number(value.freeDeliveryFrom),
       openingHours: value.openingHours?.trim().slice(0, 120) || current.state.settings.openingHours,
+      kitchenPrinter: value.kitchenPrinter?.trim().slice(0, 80) || current.state.settings.kitchenPrinter,
+      counterPrinter: value.counterPrinter?.trim().slice(0, 80) || current.state.settings.counterPrinter,
+      barPrinter: value.barPrinter?.trim().slice(0, 80) || current.state.settings.barPrinter,
+      printCopies: value.printCopies === undefined ? current.state.settings.printCopies : Number(value.printCopies),
     };
     await save(current.id, current.state);
     return json(current.state.settings);
