@@ -42,6 +42,35 @@ O Dockerfile também aceita esse valor como build argument, mas a variável de a
 
 Se preferir publicar o backend em outro subdomínio, use esse endereço em `VITE_API_BASE_URL`, `PUBLIC_API_URL` e `CORS_ORIGIN`.
 
+## Deploy automático pelo GitHub
+
+Há duas formas seguras de fazer o EasyPanel atualizar automaticamente quando a branch `main` receber mudanças no GitHub.
+
+### Opção recomendada: Auto Deploy nativo do EasyPanel
+
+Em cada serviço do EasyPanel, confirme que a origem está configurada como GitHub:
+
+- Repositório: `RuanMarcos38/Yooga-`
+- Branch: `main`
+- Build path: `/`
+- Backend: Dockerfile `Dockerfile.backend`
+- Frontend: Dockerfile `Dockerfile.frontend`
+
+Depois, entre em `Overview` no serviço e clique em `Enable Auto Deploy`. Faça isso nos dois serviços: backend e frontend.
+
+### Opção alternativa: GitHub Actions com Deployment Trigger URL
+
+Este repositório também inclui o workflow `.github/workflows/easypanel-deploy.yml`. Ele roda em todo push na branch `main` e chama os gatilhos de deploy do EasyPanel.
+
+Para ativar:
+
+1. No EasyPanel, abra o serviço backend e copie o `Deployment Trigger URL`.
+2. No GitHub, abra `Settings > Secrets and variables > Actions > New repository secret`.
+3. Crie o secret `EASYPANEL_BACKEND_DEPLOY_URL` com a URL do backend.
+4. Repita o processo no serviço frontend e crie o secret `EASYPANEL_FRONTEND_DEPLOY_URL`.
+
+Essas URLs contêm token secreto. Nunca coloque esses valores no código, README, issues ou commits.
+
 ## Observações
 
 - O backend grava dados e imagens em `/data`; por isso o volume persistente é obrigatório.

@@ -1,0 +1,38 @@
+name: Deploy EasyPanel
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Trigger EasyPanel deploy
+    runs-on: ubuntu-latest
+    env:
+      EASYPANEL_BACKEND_DEPLOY_URL: ${{ secrets.EASYPANEL_BACKEND_DEPLOY_URL }}
+      EASYPANEL_FRONTEND_DEPLOY_URL: ${{ secrets.EASYPANEL_FRONTEND_DEPLOY_URL }}
+
+    steps:
+      - name: Check deploy trigger URLs
+        id: check-secrets
+        shell: bash
+        run: |
+          if [[ -z "$EASYPANEL_BACKEND_DEPLOY_URL" || -z "$EASYPANEL_FRONTEND_DEPLOY_URL" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Configure EASYPANEL_BACKEND_DEPLOY_URL and EASYPANEL_FRONTEND_DEPLOY_URL in GitHub repository secrets to enable automatic deploy."
+            exit 0
+          fi
+
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy backend
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: bash
+        run: curl --fail --silent --show-error --request POST "$EASYPANEL_BACKEND_DEPLOY_URL"
+
+      - name: Deploy frontend
+        if: steps.check-secrets.outputs.configured == 'true'
+        shell: bash
+        run: curl --fail --silent --show-error --request POST "$EASYPANEL_FRONTEND_DEPLOY_URL"
