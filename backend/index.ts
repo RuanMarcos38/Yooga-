@@ -152,7 +152,7 @@ const defaultCategories = (): MenuCategory[] => [
   { id: 'cat5', name: 'Combos', active: true, order: 5 },
 ];
 
-const defaultTables = (): T[] => Array.from({ length: 14 }, (_, index) => ({
+const defaultTables = (): T[] => Array.from({ length: 40 }, (_, index) => ({
   id: 't' + (index + 1),
   name: 'Mesa ' + String(index + 1).padStart(2, '0'),
   seats: index % 3 === 0 ? 6 : 4,
