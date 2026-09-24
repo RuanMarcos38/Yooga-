@@ -119,6 +119,8 @@ type S = {
   settings: AppSettings;
 };
 
+const tableStatusValues: T['status'][] = ['Livre', 'Ocupada', 'Aguardando', 'Fechamento'];
+
 const defaultSettings = (): AppSettings => ({
   restaurantName: 'Mesa Restaurante',
   unit: 'Unidade Centro',
@@ -150,6 +152,15 @@ const defaultCategories = (): MenuCategory[] => [
   { id: 'cat5', name: 'Combos', active: true, order: 5 },
 ];
 
+const defaultTables = (): T[] => Array.from({ length: 14 }, (_, index) => ({
+  id: 't' + (index + 1),
+  name: 'Mesa ' + String(index + 1).padStart(2, '0'),
+  seats: index % 3 === 0 ? 6 : 4,
+  status: (index === 0 ? 'Ocupada' : index === 1 || index === 4 ? 'Aguardando' : 'Livre') as T['status'],
+  total: index === 0 ? 86.7 : index === 1 ? 49.8 : index === 4 ? 129.4 : 0,
+  waiter: index === 0 ? 'Marina' : index === 1 ? 'João' : index === 4 ? 'Carlos' : undefined,
+}));
+
 const seed = (): S => ({
   settings: defaultSettings(),
   menuCategories: defaultCategories(),
@@ -176,14 +187,7 @@ const seed = (): S => ({
     addons: [],
     ingredients: [],
   })),
-  tables: Array.from({ length: 14 }, (_, index) => ({
-    id: 't' + (index + 1),
-    name: 'Mesa ' + String(index + 1).padStart(2, '0'),
-    seats: index % 3 === 0 ? 6 : 4,
-    status: (index === 0 ? 'Ocupada' : index === 1 || index === 4 ? 'Aguardando' : 'Livre') as T['status'],
-    total: index === 0 ? 86.7 : index === 1 ? 49.8 : index === 4 ? 129.4 : 0,
-    waiter: index === 0 ? 'Marina' : index === 1 ? 'João' : index === 4 ? 'Carlos' : undefined,
-  })),
+  tables: defaultTables(),
   orders: [
     {
       id: 'o1',
@@ -266,6 +270,60 @@ const seed = (): S => ({
   ],
 });
 
+function normalizeTable(table: Partial<T>, fallback: T): T {
+  const seats = Number(table.seats ?? fallback.seats);
+  const total = Number(table.total ?? fallback.total);
+  const status = table.status && tableStatusValues.includes(table.status) ? table.status : fallback.status;
+  const waiter = typeof table.waiter === 'string' && table.waiter.trim() ? table.waiter : fallback.waiter;
+
+  return {
+    id: String(table.id || fallback.id),
+    name: String(table.name || fallback.name),
+    seats: Number.isFinite(seats) && seats > 0 ? seats : fallback.seats,
+    status,
+    total: Number.isFinite(total) ? Number(total.toFixed(2)) : fallback.total,
+    waiter,
+  };
+}
+
+function normalizeTables(rawTables?: Array<Partial<T>>): T[] {
+  const defaults = defaultTables();
+  if (!Array.isArray(rawTables) || rawTables.length === 0) return defaults;
+
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  const normalized = rawTables
+    .filter(table => table && (table.id || table.name))
+    .map((table, index) => {
+      const fallback = defaults.find(item => item.id === table.id || item.name === table.name)
+        || defaults[index]
+        || {
+          id: String(table.id || 't-custom-' + (index + 1)),
+          name: String(table.name || 'Mesa ' + String(index + 1).padStart(2, '0')),
+          seats: 4,
+          status: 'Livre' as T['status'],
+          total: 0,
+        };
+      const normalizedTable = normalizeTable(table, fallback);
+      seenIds.add(normalizedTable.id);
+      seenNames.add(normalizedTable.name.toLowerCase());
+      return normalizedTable;
+    });
+
+  for (const table of defaults) {
+    if (!seenIds.has(table.id) && !seenNames.has(table.name.toLowerCase())) {
+      normalized.push(table);
+    }
+  }
+
+  return normalized;
+}
+
+function shouldPersistRepairedTables(rawTables: T[] | undefined, tables: T[]) {
+  if (!Array.isArray(rawTables) || rawTables.length === 0) return true;
+  return tables.length > rawTables.length;
+}
+
 function normalizeState(raw: Partial<S>): S {
   const base = seed();
   return {
@@ -279,7 +337,7 @@ function normalizeState(raw: Partial<S>): S {
       ingredients: product.ingredients ?? [],
     })),
     menuCategories: raw.menuCategories?.length ? raw.menuCategories : base.menuCategories,
-    tables: raw.tables || base.tables,
+    tables: normalizeTables(raw.tables),
     orders: (raw.orders || base.orders).map(order => ({
       updatedAt: order.createdAt,
       ...order,
@@ -297,8 +355,14 @@ function normalizeState(raw: Partial<S>): S {
 async function get() {
   const result = await db.list<S>('mesa_state', { limit: 1 });
   if (result.items.length) {
-    const { id, ...state } = result.items[0];
-    return { id, state: normalizeState(state as Partial<S>) };
+    const { id, ...record } = result.items[0];
+    const raw = record as Partial<S>;
+    const state = normalizeState(raw);
+    if (shouldPersistRepairedTables(raw.tables, state.tables)) {
+      const [ok] = await db.update('mesa_state', [{ id, record: state as unknown as Record<string, unknown> }]);
+      if (!ok) throw new Error('save');
+    }
+    return { id, state };
   }
   const state = seed();
   const [id] = await db.add('mesa_state', [state as unknown as Record<string, unknown>]);
@@ -487,7 +551,7 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
 }
 
 const allowedOrderStatuses = new Set(['Novo', 'Preparando', 'Pronto', 'Entregue', 'Finalizado', 'Cancelado']);
-const allowedTableStatuses = new Set<T['status']>(['Livre', 'Ocupada', 'Aguardando', 'Fechamento']);
+const allowedTableStatuses = new Set<T['status']>(tableStatusValues);
 const allowedOrderChannels = new Set(['Mesa', 'Balcão', 'Delivery', 'QR/Totem', 'API']);
 
 function validateOrderItems(state: S, rawItems: Array<Partial<I>>) {

@@ -154,6 +154,28 @@ const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['settings', 'Configurações', Settings],
 ];
 
+const pageRoutes: Record<Page, string> = {
+  dashboard: '/',
+  pdv: '/pedidos',
+  tables: '/mesas',
+  history: '/historico',
+  menu: '/cardapio',
+  kds: '/cozinha',
+  delivery: '/delivery',
+  products: '/produtos',
+  stock: '/estoque',
+  finance: '/financeiro',
+  customers: '/clientes',
+  reports: '/relatorios',
+  settings: '/configuracoes',
+};
+
+const pageFromPath = (pathname: string): Page => {
+  const normalized = pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+  const match = Object.entries(pageRoutes).find(([, route]) => route.replace(/^\/+|\/+$/g, '') === normalized);
+  return match ? match[0] as Page : 'dashboard';
+};
+
 const defaultSettings: AppSettings = {
   restaurantName: 'Mesa Restaurante',
   unit: 'Unidade Centro',
@@ -236,7 +258,7 @@ export default function MesaApp() {
 }
 
 function AdminApp() {
-  const [page, setPage] = useState<Page>('dashboard');
+  const [page, setPageState] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [data, setData] = useState<State>(empty);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -253,6 +275,15 @@ function AdminApp() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [settingsForm, setSettingsForm] = useState<AppSettings>(defaultSettings);
   const seededCart = useRef(false);
+
+  const setPage = (nextPage: Page) => {
+    setPageState(nextPage);
+    const nextPath = pageRoutes[nextPage];
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    window.scrollTo({ top: 0 });
+  };
 
   const load = async () => {
     setLoading(true);
@@ -278,6 +309,11 @@ function AdminApp() {
   };
 
   useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const handlePopState = () => setPageState(pageFromPath(window.location.pathname));
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
   useEffect(() => {
     const timer = window.setInterval(async () => {
       try {
