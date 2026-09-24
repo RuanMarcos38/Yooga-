@@ -332,32 +332,32 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           <div className="flex items-center gap-3">
             <span className="grid h-12 w-12 place-items-center rounded-lg bg-[#f45f3f] text-white shadow-[0_18px_45px_rgba(244,95,63,.35)]"><Utensils size={22} /></span>
             <div>
-              <h1 className="text-3xl font-black text-white">TAPFOOD</h1>
+              <h1 className="text-3xl font-bold text-white">TAPFOOD</h1>
               <p className="text-xs font-semibold uppercase text-[#ffb5a5]">atendimento digital para restaurantes</p>
             </div>
           </div>
           <div>
-            <p className="mb-3 text-xs font-bold uppercase text-[#ffb5a5]">Salão, balcão e cliente na mesa</p>
-            <h2 className="max-w-[620px] text-4xl font-black leading-tight text-white md:text-5xl">Pedidos mais simples para uma operação mais leve.</h2>
+            <p className="mb-3 text-xs font-medium uppercase text-[#ffb5a5]">Salão, balcão e cliente na mesa</p>
+            <h2 className="max-w-[620px] text-4xl font-bold leading-tight text-white md:text-5xl">Pedidos mais simples para uma operação mais leve.</h2>
             <p className="mt-5 max-w-lg text-sm leading-7 text-white/78">
               Uma experiência bonita para o cliente fazer o pedido e uma rotina mais clara para a equipe acompanhar tudo no restaurante.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {['Cardápio visual', 'Pedido direto da mesa', 'Equipe sincronizada'].map(item => (
-              <span key={item} className="rounded-full border border-white/18 bg-white/10 px-3 py-2 text-[11px] font-semibold text-white/90 backdrop-blur">{item}</span>
+              <span key={item} className="rounded-full border border-white/18 bg-white/10 px-3 py-2 text-[11px] font-medium text-white/90 backdrop-blur">{item}</span>
             ))}
           </div>
         </section>
 
         <form onSubmit={submit} className="ml-auto w-full max-w-xl rounded-lg border border-white/18 bg-[#fffefa] p-5 text-[#2f3136] shadow-[0_28px_80px_rgba(0,0,0,.32)]">
           <div className="mb-5 flex rounded-lg border border-[#ece8e2] bg-white p-1">
-            <button type="button" onClick={() => setMode('empresa')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-bold ' + (mode === 'empresa' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Empresa</button>
-            <button type="button" onClick={() => setMode('cliente')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-bold ' + (mode === 'cliente' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Cliente</button>
+            <button type="button" onClick={() => setMode('empresa')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-semibold ' + (mode === 'empresa' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Empresa</button>
+            <button type="button" onClick={() => setMode('cliente')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-semibold ' + (mode === 'cliente' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Cliente</button>
           </div>
 
           <div className="mb-5">
-            <h2 className="text-xl font-black">{mode === 'empresa' ? 'Acesso do estabelecimento' : 'Acesso do cliente'}</h2>
+            <h2 className="text-xl font-semibold">{mode === 'empresa' ? 'Acesso do estabelecimento' : 'Acesso do cliente'}</h2>
             <p className="mt-1 text-xs text-slate-400">{mode === 'empresa' ? 'Entre para acompanhar pedidos, mesas e atendimento.' : 'Veja o cardápio, monte seu pedido e acompanhe sua mesa.'}</p>
           </div>
 
@@ -373,7 +373,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           {mode === 'cliente' && <p className="mt-2 text-[10px] text-slate-400">A senha da mesa segue o padrão informado ao estabelecimento.</p>}
           {error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">{error}</div>}
 
-          <button disabled={busy || !password.trim()} className="mt-5 w-full rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-black text-white disabled:opacity-50">
+          <button disabled={busy || !password.trim()} className="mt-5 w-full rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-semibold text-white disabled:opacity-50">
             {busy ? 'Entrando...' : 'Entrar'}
           </button>
         </form>
