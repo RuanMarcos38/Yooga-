@@ -230,6 +230,8 @@ const PHOTO_BY_PRODUCT: Record<string, string> = {
   p8: 'https://images.unsplash.com/photo-1565553642973-6afe791aee33?auto=format&fit=crop&w=900&q=82',
 };
 
+const RESTAURANT_HERO_IMAGE = 'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=2200&q=84';
+
 const productPhoto = (product: Product) => {
   if (product.imageUrl) return product.imageUrl;
   if (PHOTO_BY_PRODUCT[product.id]) return PHOTO_BY_PRODUCT[product.id];
@@ -321,35 +323,42 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   };
 
   return (
-    <main className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
-      <div className="mx-auto grid min-h-screen max-w-6xl items-center gap-6 px-4 py-8 lg:grid-cols-[.95fr_1.05fr]">
-        <section className="space-y-6">
+    <main className="relative min-h-screen overflow-hidden bg-[#151413] text-white">
+      <img src={RESTAURANT_HERO_IMAGE} alt="" className="absolute inset-0 h-full w-full object-cover natural-photo" />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(16,15,14,.88),rgba(16,15,14,.62)_42%,rgba(16,15,14,.2)),linear-gradient(0deg,rgba(16,15,14,.72),rgba(16,15,14,.08)_48%)]" />
+
+      <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-8 px-4 py-8 lg:grid-cols-[.95fr_1.05fr]">
+        <section className="max-w-xl space-y-7">
           <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#f45f3f] text-white"><Utensils size={22} /></span>
+            <span className="grid h-12 w-12 place-items-center rounded-lg bg-[#f45f3f] text-white shadow-[0_18px_45px_rgba(244,95,63,.35)]"><Utensils size={22} /></span>
             <div>
-              <h1 className="text-3xl font-black tracking-normal text-[#202538]">TAPFOOD</h1>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#f45f3f]">Gestão de atendimento, mesas e pedidos</p>
+              <h1 className="text-3xl font-black text-white">TAPFOOD</h1>
+              <p className="text-xs font-semibold uppercase text-[#ffb5a5]">atendimento digital para restaurantes</p>
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Metric label="Mesas conectadas" value="40" />
-            <Metric label="Pedidos em tempo real" value="KDS" />
-            <Metric label="Cliente na mesa" value="QR" />
+          <div>
+            <p className="mb-3 text-xs font-bold uppercase text-[#ffb5a5]">Salão, balcão e cliente na mesa</p>
+            <h2 className="max-w-[620px] text-4xl font-black leading-tight text-white md:text-5xl">Pedidos mais simples para uma operação mais leve.</h2>
+            <p className="mt-5 max-w-lg text-sm leading-7 text-white/78">
+              Uma experiência bonita para o cliente fazer o pedido e uma rotina mais clara para a equipe acompanhar tudo no restaurante.
+            </p>
           </div>
-          <div className="rounded-xl border border-[#e4e1dc] bg-[#fffefa] p-4 text-sm leading-6 text-slate-600">
-            Operação preparada para loja, salão, balcão e cliente final com notificações, integrações e controle por perfil.
+          <div className="flex flex-wrap gap-2">
+            {['Cardápio visual', 'Pedido direto da mesa', 'Equipe sincronizada'].map(item => (
+              <span key={item} className="rounded-full border border-white/18 bg-white/10 px-3 py-2 text-[11px] font-semibold text-white/90 backdrop-blur">{item}</span>
+            ))}
           </div>
         </section>
 
-        <form onSubmit={submit} className="rounded-2xl border border-[#e6e2dc] bg-[#fffefa] p-5 shadow-[0_24px_70px_rgba(38,35,32,.12)]">
-          <div className="mb-5 flex rounded-xl border border-[#ece8e2] bg-white p-1">
+        <form onSubmit={submit} className="ml-auto w-full max-w-xl rounded-lg border border-white/18 bg-[#fffefa] p-5 text-[#2f3136] shadow-[0_28px_80px_rgba(0,0,0,.32)]">
+          <div className="mb-5 flex rounded-lg border border-[#ece8e2] bg-white p-1">
             <button type="button" onClick={() => setMode('empresa')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-bold ' + (mode === 'empresa' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Empresa</button>
             <button type="button" onClick={() => setMode('cliente')} className={'flex-1 rounded-lg px-4 py-3 text-xs font-bold ' + (mode === 'cliente' ? 'bg-[#202538] text-white' : 'text-slate-500')}>Cliente</button>
           </div>
 
           <div className="mb-5">
             <h2 className="text-xl font-black">{mode === 'empresa' ? 'Acesso do estabelecimento' : 'Acesso do cliente'}</h2>
-            <p className="mt-1 text-xs text-slate-400">{mode === 'empresa' ? 'Painel completo da operação.' : 'Acompanhamento da mesa e do pedido.'}</p>
+            <p className="mt-1 text-xs text-slate-400">{mode === 'empresa' ? 'Entre para acompanhar pedidos, mesas e atendimento.' : 'Veja o cardápio, monte seu pedido e acompanhe sua mesa.'}</p>
           </div>
 
           <div className="space-y-3">
