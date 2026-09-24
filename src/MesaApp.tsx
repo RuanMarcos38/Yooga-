@@ -1413,12 +1413,18 @@ type CustomerPortalData = {
   table: Table;
   orders: Order[];
   pendingRequests: ServiceRequest[];
+  menuCategories: MenuCategory[];
+  products: Product[];
 };
 
 function CustomerPortal({ code, session, onLogout }: { code: string; session?: AuthSession | null; onLogout?: () => void }) {
   const [data, setData] = useState<CustomerPortalData | null>(null);
   const [error, setError] = useState('');
   const [requesting, setRequesting] = useState('');
+  const [customerCart, setCustomerCart] = useState<Item[]>([]);
+  const [customerCategory, setCustomerCategory] = useState('Todos');
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [orderMessage, setOrderMessage] = useState('');
   const customerStorageKey = 'tapfood-customer-' + code.toLowerCase();
   const [customerForm, setCustomerForm] = useState(() => {
     try {
@@ -1497,6 +1503,48 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     }
   };
 
+  const addCustomerProduct = (product: Product) => {
+    setOrderMessage('');
+    setCustomerCart(current => {
+      const found = current.find(item => item.productId === product.id);
+      if (found) {
+        if (found.qty >= product.stock) return current;
+        return current.map(item => item.productId === product.id ? { ...item, qty: item.qty + 1 } : item);
+      }
+      return [...current, { productId: product.id, name: product.name, qty: 1, price: product.price }];
+    });
+  };
+
+  const changeCustomerQty = (productId: string, delta: number) => {
+    setOrderMessage('');
+    setCustomerCart(current => current.map(item => {
+      if (item.productId !== productId) return item;
+      const product = data?.products.find(candidate => candidate.id === productId);
+      const limit = product?.stock || item.qty;
+      return { ...item, qty: Math.min(limit, item.qty + delta) };
+    }).filter(item => item.qty > 0));
+  };
+
+  const sendCustomerOrder = async () => {
+    if (!customerCart.length) return;
+    setPlacingOrder(true);
+    setOrderMessage('');
+    try {
+      await api.post('/api/customer/table/' + encodeURIComponent(code) + '/orders', {
+        customer: String(customerForm.name || session?.name || 'Cliente da mesa').trim(),
+        items: customerCart,
+      });
+      setCustomerCart([]);
+      setCustomerCategory('Todos');
+      setOrderMessage('Pedido enviado para a equipe.');
+      await load();
+    } catch (err) {
+      setOrderMessage(err instanceof Error ? err.message : 'Não foi possível enviar o pedido.');
+    } finally {
+      setPlacingOrder(false);
+    }
+  };
+
   if (error) return <div className="grid min-h-screen place-items-center bg-[#f6f5f2] p-6"><div className="max-w-md rounded-2xl bg-white p-6 text-center shadow-lg"><AlertTriangle className="mx-auto text-amber-500" /><h1 className="mt-3 text-lg font-bold">Mesa não encontrada</h1><p className="mt-2 text-sm text-slate-500">{error}</p></div></div>;
   if (!data) return <div className="grid min-h-screen place-items-center bg-[#f6f5f2] text-sm text-slate-400">Conectando à mesa...</div>;
 
@@ -1506,6 +1554,14 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   const subtotal = data.orders.reduce((sum, order) => sum + order.total, 0);
   const hasWaiter = data.pendingRequests.some(request => request.type === 'waiter');
   const hasBill = data.pendingRequests.some(request => request.type === 'bill');
+  const customerCategories = ['Todos', ...Array.from(new Set([
+    ...data.menuCategories.filter(item => item.active).sort((a, b) => a.order - b.order).map(item => item.name),
+    ...data.products.map(product => product.category),
+  ]))];
+  const customerProducts = data.products.filter(product => customerCategory === 'Todos' || product.category === customerCategory);
+  const orderSubtotal = customerCart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const orderFee = data.store.automaticServiceFee ? orderSubtotal * (data.store.serviceFee / 100) : 0;
+  const orderTotal = Number((orderSubtotal + orderFee).toFixed(2));
 
   return (
     <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
@@ -1546,6 +1602,95 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
             <span className={'rounded-full px-3 py-1.5 text-[10px] font-bold ' + (data.table.status === 'Livre' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700')}>{data.table.status}</span>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#f7f7f5] p-3"><small className="text-slate-400">Total da mesa</small><b className="mt-1 block text-lg">{BRL(data.table.total || subtotal)}</b></div><div className="rounded-xl bg-[#f7f7f5] p-3"><small className="text-slate-400">Pedidos ativos</small><b className="mt-1 block text-lg">{data.orders.length}</b></div></div>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <small className="text-slate-400">Faça seu pedido</small>
+              <h2 className="text-xl font-bold">Cardápio</h2>
+            </div>
+            <span className="rounded-full bg-[#fff2ee] px-3 py-1.5 text-[10px] font-bold text-[#e85b3a]">{data.products.length} item(ns)</span>
+          </div>
+
+          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+            {customerCategories.map(category => (
+              <button
+                key={category}
+                onClick={() => setCustomerCategory(category)}
+                className={'whitespace-nowrap rounded-full border px-4 py-2 text-[10px] font-bold ' + (customerCategory === category ? 'border-[#f45f3f] bg-[#fff3ef] text-[#d84f31]' : 'border-[#e5e6ec] text-slate-500')}
+              >
+                {category}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 divide-y divide-[#f0efec]">
+            {customerProducts.map(product => {
+              const quantity = customerCart.find(item => item.productId === product.id)?.qty || 0;
+              return (
+                <div key={product.id} className="grid grid-cols-[76px_1fr_auto] gap-3 py-3">
+                  <div className="h-[76px] w-[76px] overflow-hidden rounded-xl bg-[#eeeae4]">
+                    <img src={productPhoto(product)} alt={product.name} loading="lazy" className="h-full w-full object-cover natural-photo" />
+                  </div>
+                  <div className="min-w-0">
+                    <b className="block truncate text-sm">{product.name}</b>
+                    {product.description && <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-400">{product.description}</p>}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <strong className="text-sm text-[#ef5a38]">{BRL(product.price)}</strong>
+                      {product.prepTime && <span className="text-[10px] text-slate-400">{product.prepTime} min</span>}
+                    </div>
+                  </div>
+                  <div className="flex w-20 flex-col items-end justify-center gap-2">
+                    {quantity > 0 ? (
+                      <div className="flex items-center gap-1 rounded-full border border-[#e5e6ec] p-1">
+                        <button onClick={() => changeCustomerQty(product.id, -1)} className="grid h-6 w-6 place-items-center rounded-full bg-slate-50 text-slate-500"><Minus size={12} /></button>
+                        <b className="w-4 text-center text-xs">{quantity}</b>
+                        <button onClick={() => changeCustomerQty(product.id, 1)} className="grid h-6 w-6 place-items-center rounded-full bg-[#fff2ee] text-[#e85b3a]"><Plus size={12} /></button>
+                      </div>
+                    ) : (
+                      <button disabled={product.stock <= 0} onClick={() => addCustomerProduct(product)} className="grid h-9 w-9 place-items-center rounded-full bg-[#f45f3f] text-white disabled:bg-slate-200 disabled:text-slate-400"><Plus size={17} /></button>
+                    )}
+                    {product.stock <= 0 && <span className="text-[9px] font-bold text-slate-400">Esgotado</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {!customerProducts.length && <div className="mt-4 rounded-xl bg-[#f7f7f5] p-5 text-center text-sm text-slate-400">Nenhum item disponível nesta categoria.</div>}
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <small className="text-slate-400">Itens selecionados</small>
+              <h2 className="font-bold">Seu pedido</h2>
+            </div>
+            <b className="text-lg text-[#ef5a38]">{BRL(orderTotal)}</b>
+          </div>
+          <div className="mt-4 space-y-3">
+            {customerCart.map(item => (
+              <div key={item.productId} className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <b className="block truncate text-xs">{item.qty}x {item.name}</b>
+                  <small className="text-[10px] text-slate-400">{BRL(item.price * item.qty)}</small>
+                </div>
+                <button onClick={() => changeCustomerQty(item.productId, -1)} className="grid h-7 w-7 place-items-center rounded-lg border border-[#e5e6ec]"><Minus size={12} /></button>
+                <button onClick={() => changeCustomerQty(item.productId, 1)} className="grid h-7 w-7 place-items-center rounded-lg border border-[#e5e6ec]"><Plus size={12} /></button>
+                <button onClick={() => setCustomerCart(current => current.filter(cartItem => cartItem.productId !== item.productId))} className="grid h-7 w-7 place-items-center rounded-lg text-slate-300 hover:text-red-500"><Trash2 size={13} /></button>
+              </div>
+            ))}
+            {!customerCart.length && <div className="rounded-xl border border-dashed border-[#d9dbe3] p-5 text-center text-xs text-slate-400">Escolha itens do cardápio para montar seu pedido.</div>}
+          </div>
+          {!!customerCart.length && (
+            <div className="mt-4 rounded-xl bg-[#f7f7f5] p-3 text-xs">
+              <div className="flex justify-between text-slate-500"><span>Subtotal</span><b>{BRL(orderSubtotal)}</b></div>
+              {data.store.automaticServiceFee && <div className="mt-2 flex justify-between text-slate-500"><span>Serviço</span><b>{BRL(orderFee)}</b></div>}
+              <div className="mt-3 flex justify-between border-t pt-3 font-bold"><span>Total</span><span>{BRL(orderTotal)}</span></div>
+            </div>
+          )}
+          {orderMessage && <p className="mt-3 text-xs text-slate-500">{orderMessage}</p>}
+          <button disabled={!customerCart.length || placingOrder} onClick={() => void sendCustomerOrder()} className="mt-4 w-full rounded-xl bg-[#f45f3f] px-4 py-4 text-sm font-bold text-white disabled:opacity-50">{placingOrder ? 'Enviando...' : 'Enviar pedido'}</button>
         </section>
 
         {current ? (
