@@ -2368,6 +2368,10 @@ function DeliveryView(props: ViewProps) {
 function ProductsView(props: ViewProps) {
   const [productOpen, setProductOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [quickUploadOpen, setQuickUploadOpen] = useState(false);
+  const [quickUploadProductId, setQuickUploadProductId] = useState(props.data.products[0]?.id || '');
+  const [quickUploadFile, setQuickUploadFile] = useState<File | null>(null);
+  const [quickUploadPreview, setQuickUploadPreview] = useState('');
   const categories = [...props.data.menuCategories].sort((a, b) => a.order - b.order);
 
   const openNewProduct = () => {
@@ -2380,6 +2384,39 @@ function ProductsView(props: ViewProps) {
     setProductOpen(true);
   };
 
+  const openQuickUpload = () => {
+    const first = props.data.products[0];
+    setQuickUploadProductId(first?.id || '');
+    setQuickUploadFile(null);
+    setQuickUploadPreview(first ? productPhoto(first) : '');
+    setQuickUploadOpen(true);
+  };
+
+  const selectQuickUploadProduct = (id: string) => {
+    setQuickUploadProductId(id);
+    const selected = props.data.products.find(product => product.id === id);
+    if (!quickUploadFile) setQuickUploadPreview(selected ? productPhoto(selected) : '');
+  };
+
+  const selectQuickUploadFile = (file: File | null) => {
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      alert('Formato inválido. Use JPG, PNG ou WebP.');
+      return;
+    }
+    setQuickUploadFile(file);
+    const url = URL.createObjectURL(file);
+    setQuickUploadPreview(url);
+  };
+
+  const saveQuickUpload = async () => {
+    if (!quickUploadProductId || !quickUploadFile) return;
+    const image = await compressImage(quickUploadFile);
+    await props.run(() => api.post('/api/products/' + quickUploadProductId + '/image', image), 'Foto do produto atualizada.');
+    setQuickUploadOpen(false);
+    setQuickUploadFile(null);
+  };
+
   return (
     <PageSection title="Produtos" subtitle="Catálogo comercial do restaurante" action="Novo produto" onAction={openNewProduct}>
       <Surface>
@@ -2388,7 +2425,7 @@ function ProductsView(props: ViewProps) {
             <b className="block text-xs">Produtos cadastrados</b>
             <small className="text-[10px] text-slate-400">Cadastre o produto com foto, preço, estoque e demais informações do cardápio.</small>
           </div>
-          <span className="hidden items-center gap-1 rounded-full bg-[#fff2ee] px-3 py-1.5 text-[9px] font-semibold text-[#df5536] sm:flex"><ImagePlus size={13} />Upload de foto disponível</span>
+          <button type="button" onClick={openQuickUpload} className="hidden items-center gap-1 rounded-full bg-[#fff2ee] px-3 py-1.5 text-[9px] font-semibold text-[#df5536] transition hover:bg-[#ffe6df] sm:flex"><ImagePlus size={13} />Upload de foto disponível</button>
         </div>
 
         {props.data.products.filter(product => !props.search || product.name.toLowerCase().includes(props.search.toLowerCase())).map(product => (
@@ -2409,6 +2446,39 @@ function ProductsView(props: ViewProps) {
       </Surface>
 
       {productOpen && <ProductEditor product={editingProduct} categories={categories} run={props.run} onClose={() => setProductOpen(false)} />}
+
+      {quickUploadOpen && (
+        <Modal title="Upload rápido de foto" onClose={() => setQuickUploadOpen(false)}>
+          <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
+            <div className="grid min-h-[160px] place-items-center overflow-hidden rounded-xl border border-[#e8e4de] bg-[#faf9f6]">
+              {quickUploadPreview
+                ? <img src={quickUploadPreview} alt="Pré-visualização" className="h-40 w-full object-cover natural-photo" />
+                : <div className="text-center text-slate-400"><ImagePlus size={28} className="mx-auto" /><span className="mt-2 block text-[10px]">Selecione uma foto</span></div>}
+            </div>
+            <div className="space-y-3">
+              <Field label="Produto">
+                <select value={quickUploadProductId} onChange={event => selectQuickUploadProduct(event.target.value)} className="control">
+                  {props.data.products.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Foto">
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-[#d6d2cb] bg-white px-4 py-4 text-[10px] font-semibold text-[#555d62]">
+                  <ImagePlus size={18} className="text-[#e45d3e]" />
+                  {quickUploadFile ? quickUploadFile.name : 'Escolher JPG, PNG ou WebP'}
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={event => selectQuickUploadFile(event.target.files?.[0] || null)} />
+                </label>
+              </Field>
+              <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">
+                A foto será otimizada automaticamente e substituirá somente a imagem do produto selecionado.
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setQuickUploadOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button>
+            <button disabled={!quickUploadProductId || !quickUploadFile} onClick={() => void saveQuickUpload()} className="rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-bold text-white disabled:opacity-40">Enviar foto</button>
+          </div>
+        </Modal>
+      )}
     </PageSection>
   );
 }
