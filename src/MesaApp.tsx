@@ -141,6 +141,8 @@ const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', curren
 const ACCENT = '#f45f3f';
 const AUTH_STORAGE_KEY = 'tapfood-auth-session';
 
+const tenantCustomerCode = (tableName: string, companyId?: string) => companyId ? companyId + '~' + tableName : tableName;
+
 const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['dashboard', 'Dashboard', LayoutDashboard],
   ['pdv', 'Pedidos / PDV', ShoppingBag],
@@ -1046,8 +1048,8 @@ function TableOrderWorkspace(props: ViewProps) {
         </label>
         <button onClick={() => props.setPage('history')} className="grid h-11 w-11 place-items-center rounded-full text-[#535c60] hover:bg-white"><History size={20} /></button>
         <button onClick={async () => {
-          const code = props.table.toUpperCase().replace(/\s+/g, '-');
-          const link = window.location.origin + window.location.pathname + '?cliente=' + encodeURIComponent(code);
+          const code = tenantCustomerCode(props.table, props.session.companyId);
+          const link = window.location.origin + '/?cliente=' + encodeURIComponent(code);
           try {
             await navigator.clipboard.writeText(link);
             alert('Link do cliente copiado: ' + link);
@@ -1229,7 +1231,7 @@ function MenuBuilderView(props: ViewProps) {
       {productOpen && <ProductEditor product={editingProduct} categories={categories} run={props.run} onClose={() => setProductOpen(false)} />}
       {categoryOpen && <CategoryEditor category={editingCategory} run={props.run} onClose={() => setCategoryOpen(false)} />}
       {qrOpen && (() => {
-        const link = window.location.origin + '/?cliente=' + encodeURIComponent(qrTable);
+        const link = window.location.origin + '/?cliente=' + encodeURIComponent(tenantCustomerCode(qrTable, props.session.companyId));
         return (
           <Modal title="QR Code do cardápio" onClose={() => setQrOpen(false)}>
             <div className="grid gap-4 md:grid-cols-[220px_1fr]">
@@ -2081,8 +2083,8 @@ function TablesView(props: ViewProps) {
   };
 
   const copyCustomerLink = async (tableName: string) => {
-    const code = tableName.toUpperCase().replace(/\s+/g, '-');
-    const link = window.location.origin + window.location.pathname + '?cliente=' + encodeURIComponent(code);
+    const code = tenantCustomerCode(tableName, props.session.companyId);
+    const link = window.location.origin + '/?cliente=' + encodeURIComponent(code);
     try {
       await navigator.clipboard.writeText(link);
       alert('Link do cliente copiado: ' + link);
@@ -2993,6 +2995,9 @@ function SettingsView(props: ViewProps) {
   }
 
   if (section === 'companies') {
+    if (props.session.role !== 'Super Admin') {
+      return <section><SettingsBack title="Empresas contratantes" onBack={showHub} subtitle="Área exclusiva do perfil Master" /><Surface><div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">Somente o perfil Master pode cadastrar, editar ou excluir empresas. Sua empresa permanece isolada e você pode administrar apenas os usuários vinculados a ela.</div></Surface></section>;
+    }
     return (
       <section>
         <SettingsBack title="Empresas contratantes" onBack={showHub} subtitle="Cadastre e acompanhe as empresas que utilizam a plataforma" />
@@ -3043,7 +3048,7 @@ function SettingsView(props: ViewProps) {
   }
 
   if (section === 'qr') {
-    const qrLink = window.location.origin + '/?cliente=' + encodeURIComponent(settingsQrTable);
+    const qrLink = window.location.origin + '/?cliente=' + encodeURIComponent(tenantCustomerCode(settingsQrTable, props.session.companyId));
     return (
       <section>
         <SettingsBack title="Cardápio QR Code" onBack={showHub} subtitle="Gere, teste e copie o acesso de cada mesa" />
@@ -3067,7 +3072,7 @@ function SettingsView(props: ViewProps) {
 
   if (section === 'access') {
     const sampleTable = props.data.tables[0]?.name || 'Mesa 01';
-    const customerUrl = window.location.origin + '/?cliente=' + encodeURIComponent(sampleTable);
+    const customerUrl = window.location.origin + '/?cliente=' + encodeURIComponent(tenantCustomerCode(sampleTable, props.session.companyId));
     return (
       <section>
         <SettingsBack title="Acessos e Usuários" onBack={showHub} subtitle="Crie acessos por empresa e identifique cada ação nos logs" />
@@ -3105,7 +3110,7 @@ function SettingsView(props: ViewProps) {
           <div className="space-y-4">
             <Surface>
               <SectionHead title="Sessão atual" subtitle="Identidade usada nos registros de auditoria" />
-              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · {props.session.role}</small></span><Badge value="Ativo" /></DataRow>
+              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · {props.session.role === 'Super Admin' ? 'Perfil Master' : props.session.role} · {props.session.companyName || 'TAPFOOD'}</small></span><Badge value="Ativo" /></DataRow>
               <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] leading-4 text-emerald-700">Pedidos, caixa, mesas, cadastros e demais ações auditadas passam a registrar o nome do usuário autenticado.</div>
               <button onClick={props.onLogout} className="mt-3 w-fit rounded-xl bg-[#202538] px-4 py-3 text-[10px] font-bold text-white">Sair da empresa</button>
             </Surface>
@@ -3329,7 +3334,7 @@ function SettingsView(props: ViewProps) {
 
       <SettingsGroup title="Configurações">
         <AjusteTile icon={<Settings size={29} />} title="Geral" onClick={() => setSection('general')} />
-        <AjusteTile icon={<Store size={29} />} title="Empresas contratantes" onClick={() => setSection('companies')} />
+        {props.session.role === 'Super Admin' && <AjusteTile icon={<Store size={29} />} title="Empresas contratantes" onClick={() => setSection('companies')} />}
         <AjusteTile icon={<UserCog size={29} />} title="Acessos" onClick={() => setSection('access')} />
         <AjusteTile icon={<Printer size={29} />} title="Impressoras" onClick={() => setSection('print')} />
         <AjusteTile icon={<KeyRound size={29} />} title="API Aberta" onClick={() => setSection('open-api')} />
