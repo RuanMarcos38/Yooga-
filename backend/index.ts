@@ -144,6 +144,18 @@ type CompanyRecord = {
   updatedAt: string;
 };
 
+type UnitRecord = {
+  id: string;
+  companyId: string;
+  name: string;
+  address: string;
+  phone?: string;
+  email?: string;
+  status: 'Ativa' | 'Inativa';
+  createdAt: string;
+  updatedAt: string;
+};
+
 function normalizeCnpj(value: unknown) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14);
 }
@@ -151,6 +163,7 @@ function normalizeCnpj(value: unknown) {
 type PlatformUserRecord = {
   id: string;
   companyId: string;
+  unitId?: string;
   name: string;
   email: string;
   role: 'Administrador' | 'Gestor' | 'Operador';
@@ -426,19 +439,28 @@ function currentTenantId() {
   return session?.companyId || '__master__';
 }
 
+function currentUnitId() {
+  const session = sessionFromAuthorization();
+  return session?.unitId || '';
+}
+
 function isMasterSession() {
   const session = sessionFromAuthorization();
   return Boolean(session && session.role === 'Super Admin');
 }
 
-function tenantCollection(base: string, tenantId = currentTenantId()) {
+function tenantCollection(base: string, tenantId = currentTenantId(), unitId = currentUnitId()) {
   if (!tenantId || tenantId === '__master__') return base;
-  return base + '__' + tenantId.replace(/[^a-z0-9_-]/gi, '_');
+  const company = tenantId.replace(/[^a-z0-9_-]/gi, '_');
+  if (!unitId) return base + '__' + company;
+  return base + '__' + company + '__' + unitId.replace(/[^a-z0-9_-]/gi, '_');
 }
 
 type CustomerAccessPayload = {
-  v: 1;
+  v: 1 | 2;
   companyId: string;
+  unitId?: string;
+  unitName?: string;
   tableId: string;
   tableName: string;
 };
@@ -462,7 +484,7 @@ function verifyCustomerAccess(code: string): CustomerAccessPayload | null {
   if (signature !== expected) return null;
   try {
     const payload = JSON.parse(Buffer.from(base, 'base64url').toString('utf8')) as CustomerAccessPayload;
-    if (payload.v !== 1 || !payload.companyId || !payload.tableId || !payload.tableName) return null;
+    if (![1, 2].includes(payload.v) || !payload.companyId || !payload.tableId || !payload.tableName) return null;
     return payload;
   } catch {
     return null;
@@ -476,6 +498,10 @@ function customerTenantFromCode(code: string) {
   const separator = decoded.indexOf('~');
   if (separator <= 0) return '__master__';
   return decoded.slice(0, separator).replace(/[^a-z0-9_-]/gi, '_') || '__master__';
+}
+
+function customerUnitFromCode(code: string) {
+  return verifyCustomerAccess(code)?.unitId || '';
 }
 
 function customerTableCode(code: string) {
@@ -496,9 +522,21 @@ function invalidCustomerAccessCode(code: string) {
   return decoded.includes('~');
 }
 
-async function get(tenantId = currentTenantId()) {
-  const collection = tenantCollection('mesa_state', tenantId);
-  const result = await db.list<S>(collection, { limit: 1 });
+async function get(tenantId = currentTenantId(), unitId = currentUnitId()) {
+  const collection = tenantCollection('mesa_state', tenantId, unitId);
+  let result = await db.list<S>(collection, { limit: 1 });
+  if (!result.items.length && tenantId !== '__master__' && unitId) {
+    const legacyCollection = tenantCollection('mesa_state', tenantId, '');
+    const legacy = await db.list<S>(legacyCollection, { limit: 1 });
+    if (legacy.items.length) {
+      const { id: _legacyId, ...legacyRecord } = legacy.items[0];
+      const migrated = normalizeState(legacyRecord as Partial<S>);
+      const unit = await getUnit(tenantId, unitId);
+      if (unit) migrated.settings = { ...migrated.settings, unit: unit.name };
+      const [migratedId] = await db.add(collection, [migrated as unknown as Record<string, unknown>]);
+      if (migratedId) result = { items: [{ id: migratedId, ...migrated }] } as any;
+    }
+  }
   if (result.items.length) {
     const { id, ...record } = result.items[0];
     const raw = record as Partial<S>;
@@ -515,8 +553,8 @@ async function get(tenantId = currentTenantId()) {
   return { id, state };
 }
 
-async function save(id: string, state: S, tenantId = currentTenantId()) {
-  const [ok] = await db.update(tenantCollection('mesa_state', tenantId), [{ id, record: state as unknown as Record<string, unknown> }]);
+async function save(id: string, state: S, tenantId = currentTenantId(), unitId = currentUnitId()) {
+  const [ok] = await db.update(tenantCollection('mesa_state', tenantId, unitId), [{ id, record: state as unknown as Record<string, unknown> }]);
   if (!ok) throw new Error('save');
 }
 
@@ -552,6 +590,8 @@ function sessionFromAuthorization() {
       userId?: string;
       companyId?: string;
       companyName?: string;
+      unitId?: string;
+      unitName?: string;
       expiresAt?: string;
     };
     if (payload.expiresAt && Date.parse(payload.expiresAt) < Date.now()) return null;
@@ -608,7 +648,7 @@ function signSession(payload: Record<string, unknown>) {
   return base + '.' + signature;
 }
 
-function authSession(payload: { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string }) {
+function authSession(payload: { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string; unitId?: string; unitName?: string }) {
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
   const session = { ...payload, expiresAt };
   return { ...session, token: signSession(session) };
@@ -621,6 +661,37 @@ function hashPlatformPassword(password: string, salt: string) {
 function createPasswordCredentials(password: string) {
   const salt = randomBytes(16).toString('hex');
   return { passwordSalt: salt, passwordHash: hashPlatformPassword(password, salt) };
+}
+
+async function listUnitsForCompany(companyId: string) {
+  const result = await db.list<UnitRecord>('tapfood_units', { limit: 1000 });
+  return result.items.filter(item => item.companyId === companyId);
+}
+
+async function ensurePrimaryUnit(company: CompanyRecord) {
+  const existing = await listUnitsForCompany(company.id);
+  if (existing.length) return existing.find(item => item.status === 'Ativa') || existing[0];
+  const now = new Date().toISOString();
+  const record = {
+    companyId: company.id,
+    name: 'Unidade Principal',
+    address: company.address || 'Endereço não informado',
+    phone: company.phone || '',
+    email: company.email || '',
+    status: 'Ativa' as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const [id] = await db.add('tapfood_units', [record]);
+  return { id, ...record } as UnitRecord;
+}
+
+async function getUnit(companyId: string, unitId?: string) {
+  const company = (await db.list<CompanyRecord>('tapfood_companies', { limit: 500 })).items.find(item => item.id === companyId);
+  if (!company) return null;
+  if (!unitId) return ensurePrimaryUnit(company);
+  const units = await listUnitsForCompany(companyId);
+  return units.find(item => item.id === unitId) || ensurePrimaryUnit(company);
 }
 
 async function findPlatformUserByEmail(email: string) {
@@ -660,6 +731,7 @@ type IntegrationConfig = {
 
 type OpenApiKeyRecord = {
   companyId: string;
+  unitId?: string;
   name: string;
   prefix: string;
   keyHash: string;
@@ -689,10 +761,10 @@ const sanitizeIntegrationFields = (raw: unknown) => {
   return output;
 };
 
-async function listIntegrationConfigs(tenantId = currentTenantId()) {
-  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId), { limit: 50 });
+async function listIntegrationConfigs(tenantId = currentTenantId(), unitId = currentUnitId()) {
+  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId, unitId), { limit: 50 });
   const map = new Map(result.items.map(item => [item.providerId, item]));
-  const current = await get(tenantId);
+  const current = await get(tenantId, unitId);
 
   return integrationIds.map(providerId => {
     const item = map.get(providerId);
@@ -730,8 +802,8 @@ async function listIntegrationConfigs(tenantId = currentTenantId()) {
   });
 }
 
-async function saveIntegrationConfig(providerId: string, patch: Partial<IntegrationConfig>, tenantId = currentTenantId()) {
-  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId), { limit: 50 });
+async function saveIntegrationConfig(providerId: string, patch: Partial<IntegrationConfig>, tenantId = currentTenantId(), unitId = currentUnitId()) {
+  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId, unitId), { limit: 50 });
   const existing = result.items.find(item => item.providerId === providerId);
   const record: IntegrationConfig = {
     providerId,
@@ -742,10 +814,10 @@ async function saveIntegrationConfig(providerId: string, patch: Partial<Integrat
     message: patch.message ?? existing?.message,
   };
   if (existing) {
-    const [ok] = await db.update(tenantCollection('mesa_integrations', tenantId), [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
+    const [ok] = await db.update(tenantCollection('mesa_integrations', tenantId, unitId), [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
     if (!ok) throw new Error('integration update failed');
   } else {
-    const [id] = await db.add(tenantCollection('mesa_integrations', tenantId), [record as unknown as Record<string, unknown>]);
+    const [id] = await db.add(tenantCollection('mesa_integrations', tenantId, unitId), [record as unknown as Record<string, unknown>]);
     if (!id) throw new Error('integration create failed');
   }
   return { id: providerId, ...record };
@@ -773,9 +845,9 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   return 'configured';
 }
 
-async function notifyN8n(state: S, event: string, payload: Record<string, unknown>, tenantId = currentTenantId()) {
+async function notifyN8n(state: S, event: string, payload: Record<string, unknown>, tenantId = currentTenantId(), unitId = currentUnitId()) {
   try {
-    const integrations = await listIntegrationConfigs(tenantId);
+    const integrations = await listIntegrationConfigs(tenantId, unitId);
     const n8n = integrations.find(item => item.id === 'n8n');
     const webhookUrl = n8n?.fields?.webhookUrl;
     if (!n8n?.enabled || !webhookUrl || n8n.status === 'Erro') return;
@@ -940,21 +1012,23 @@ export const handler = router({
 
   'POST /api/customer/access': [async ({ body }) => {
     const session = sessionFromAuthorization();
-    if (!session || session.mode !== 'empresa' || !session.companyId) return error('Acesso empresarial obrigatório', 401);
+    if (!session || session.mode !== 'empresa' || !session.companyId || !session.unitId) return error('Acesso empresarial/unidade obrigatório', 401);
     const value = body as { tableId?: string; tableName?: string };
-    const current = await get(session.companyId);
+    const current = await get(session.companyId, session.unitId);
     const table = current.state.tables.find(item =>
       (value.tableId && item.id === value.tableId) ||
       (value.tableName && item.name.toLowerCase() === String(value.tableName).trim().toLowerCase())
     );
     if (!table) return error('Mesa não encontrada', 404);
     const token = signCustomerAccess({
-      v: 1,
+      v: 2,
       companyId: session.companyId,
+      unitId: session.unitId,
+      unitName: session.unitName || current.state.settings.unit,
       tableId: table.id,
       tableName: table.name,
     });
-    return json({ token, tableId: table.id, tableName: table.name, companyId: session.companyId });
+    return json({ token, tableId: table.id, tableName: table.name, companyId: session.companyId, unitId: session.unitId, unitName: session.unitName || current.state.settings.unit });
   }],
 
   'POST /api/auth/login': [async ({ body }) => {
@@ -965,7 +1039,8 @@ export const handler = router({
       const tableCode = value.table || 'Mesa 01';
       if (invalidCustomerAccessCode(tableCode)) return error('QR Code inválido', 401);
       const tenantId = customerTenantFromCode(tableCode);
-      const current = await get(tenantId);
+      const unitId = customerUnitFromCode(tableCode);
+      const current = await get(tenantId, unitId);
       const table = tableFromCode(current.state, tableCode);
       if (!table) return error('Mesa não encontrada', 404);
       if (password.toLowerCase() !== tableLoginPassword(table.name)) return error('Senha da mesa inválida', 401);
@@ -975,6 +1050,8 @@ export const handler = router({
         role: 'Cliente',
         tableCode,
         companyId: tenantId === '__master__' ? undefined : tenantId,
+        unitId: unitId || undefined,
+        unitName: verifyCustomerAccess(tableCode)?.unitName || current.state.settings.unit,
       }));
     }
 
@@ -987,6 +1064,8 @@ export const handler = router({
       const company = companies.items.find(item => item.id === platformUser.companyId);
       if (!company) return error('Empresa vinculada não encontrada', 403);
       if (company.status === 'Inativa') return error('Acesso da empresa está inativo', 403);
+      const unit = await getUnit(company.id, platformUser.unitId);
+      if (!unit || unit.status === 'Inativa') return error('Unidade vinculada está inativa', 403);
       return json(authSession({
         mode: 'empresa',
         name: platformUser.name,
@@ -995,6 +1074,8 @@ export const handler = router({
         userId: platformUser.id,
         companyId: company.id,
         companyName: company.name,
+        unitId: unit.id,
+        unitName: unit.name,
       }));
     }
 
@@ -1013,15 +1094,64 @@ export const handler = router({
     }));
   }],
 
+  'GET /api/units': [async () => {
+    const session = sessionFromAuthorization();
+    if (!session) return error('Não autenticado', 401);
+    const result = await db.list<UnitRecord>('tapfood_units', { limit: 1000 });
+    const visible = session.role === 'Super Admin' ? result.items : result.items.filter(item => item.companyId === session.companyId);
+    return json(visible.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+  }],
+
+  'POST /api/units': [async ({ body }) => {
+    const session = sessionFromAuthorization();
+    if (!session) return error('Não autenticado', 401);
+    const value = body as Partial<UnitRecord>;
+    const companyId = session.role === 'Super Admin' ? String(value.companyId || '') : String(session.companyId || '');
+    if (!canManageCompany(companyId)) return error('Sem permissão para esta empresa', 403);
+    const name = String(value.name || '').trim();
+    const address = String(value.address || '').trim();
+    const phone = String(value.phone || '').replace(/\D/g, '');
+    const email = String(value.email || '').trim().toLowerCase();
+    if (!name || !address) return error('Nome e endereço da unidade são obrigatórios', 400);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+    const now = new Date().toISOString();
+    const record = { companyId, name: name.slice(0, 120), address: address.slice(0, 300), phone, email, status: value.status === 'Inativa' ? 'Inativa' : 'Ativa', createdAt: now, updatedAt: now };
+    const [id] = await db.add('tapfood_units', [record]);
+    if (!id) return error('Falha ao criar unidade', 500);
+    return json({ id, ...record }, 201);
+  }],
+
+  'PUT /api/units/:id': [async ({ params, body }) => {
+    const result = await db.list<UnitRecord>('tapfood_units', { limit: 1000 });
+    const current = result.items.find(item => item.id === params.id);
+    if (!current || !canManageCompany(current.companyId)) return error('Unidade não encontrada ou sem permissão', 404);
+    const value = body as Partial<UnitRecord>;
+    const next = {
+      companyId: current.companyId,
+      name: String(value.name ?? current.name).trim().slice(0, 120),
+      address: String(value.address ?? current.address).trim().slice(0, 300),
+      phone: String(value.phone ?? current.phone ?? '').replace(/\D/g, ''),
+      email: String(value.email ?? current.email ?? '').trim().toLowerCase(),
+      status: value.status === 'Inativa' ? 'Inativa' : 'Ativa',
+      createdAt: current.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    if (!next.name || !next.address) return error('Nome e endereço da unidade são obrigatórios', 400);
+    await db.update('tapfood_units', [{ id: current.id, record: next }]);
+    return json({ id: current.id, ...next });
+  }],
+
   'GET /api/platform-users': [async () => {
     const session = sessionFromAuthorization();
     if (!session) return error('Não autenticado', 401);
     const users = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
     const companies = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+    const units = await db.list<UnitRecord>('tapfood_units', { limit: 1000 });
     const companyMap = new Map(companies.items.map(item => [item.id, item.name]));
+    const unitMap = new Map(units.items.map(item => [item.id, item.name]));
     const visibleUsers = session.role === 'Super Admin' ? users.items : users.items.filter(user => user.companyId === session.companyId);
     return json(visibleUsers
-      .map(({ passwordHash, passwordSalt, ...user }) => ({ ...user, companyName: companyMap.get(user.companyId) || 'Empresa não encontrada' }))
+      .map(({ passwordHash, passwordSalt, ...user }) => ({ ...user, companyName: companyMap.get(user.companyId) || 'Empresa não encontrada', unitName: user.unitId ? unitMap.get(user.unitId) || 'Unidade não encontrada' : 'Unidade Principal' }))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
   }],
 
@@ -1036,6 +1166,11 @@ export const handler = router({
     const companyId = session.role === 'Super Admin' ? requestedCompanyId : String(session.companyId || '');
     if (!canManageCompany(companyId)) return error('Sem permissão para esta empresa', 403);
     if (!name || !email || !companyId) return error('Nome, e-mail e empresa são obrigatórios', 400);
+    const company = (await db.list<CompanyRecord>('tapfood_companies', { limit: 500 })).items.find(item => item.id === companyId);
+    if (!company) return error('Empresa não encontrada', 404);
+    const requestedUnitId = String(value.unitId || '');
+    const unit = await getUnit(companyId, requestedUnitId || undefined);
+    if (!unit || unit.status === 'Inativa') return error('Unidade inválida ou inativa', 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
     if (password.length < 6) return error('A senha deve ter no mínimo 6 caracteres', 400);
     const companies = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
@@ -1045,6 +1180,7 @@ export const handler = router({
     const now = new Date().toISOString();
     const ids = await db.add('tapfood_platform_users', [{
       companyId,
+      unitId: unit.id,
       name: name.slice(0, 120),
       email: email.slice(0, 160),
       role: ['Administrador', 'Gestor', 'Operador'].includes(String(value.role)) ? value.role : 'Operador',
@@ -1053,7 +1189,7 @@ export const handler = router({
       createdAt: now,
       updatedAt: now,
     }]);
-    return json({ id: ids[0], companyId, name, email, role: value.role || 'Operador', status: value.status || 'Ativo', createdAt: now, updatedAt: now }, 201);
+    return json({ id: ids[0], companyId, unitId: unit.id, unitName: unit.name, name, email, role: value.role || 'Operador', status: value.status || 'Ativo', createdAt: now, updatedAt: now }, 201);
   }],
 
   'PUT /api/platform-users/:id': [async ({ params, body }) => {
@@ -1066,6 +1202,8 @@ export const handler = router({
     const name = String(value.name ?? current.name).trim();
     const session = sessionFromAuthorization();
     const companyId = session?.role === 'Super Admin' ? String(value.companyId ?? current.companyId) : current.companyId;
+    const unit = await getUnit(companyId, String(value.unitId ?? current.unitId ?? '') || undefined);
+    if (!unit || unit.status === 'Inativa') return error('Unidade inválida ou inativa', 400);
     if (!name || !email || !companyId) return error('Nome, e-mail e empresa são obrigatórios', 400);
     const duplicate = result.items.find(item => item.id !== current.id && item.email.toLowerCase() === email);
     if (duplicate) return error('Já existe outro usuário com este e-mail', 409);
@@ -1079,6 +1217,7 @@ export const handler = router({
     }
     const next = {
       companyId,
+      unitId: unit.id,
       name: name.slice(0, 120),
       email: email.slice(0, 160),
       role: ['Administrador', 'Gestor', 'Operador'].includes(String(value.role ?? current.role)) ? (value.role ?? current.role) : current.role,
@@ -1186,6 +1325,7 @@ export const handler = router({
     }]);
     const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
     const created = result.items.find(item => item.id === ids[0]);
+    if (created) await ensurePrimaryUnit(created);
     return json(created, 201);
   }],
 
@@ -1258,7 +1398,7 @@ export const handler = router({
     if (params.id === 'open-api') {
       const tenantId = currentTenantId();
       const keys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
-      const active = keys.items.some(item => item.active && (item.companyId || '__master__') === tenantId);
+      const active = keys.items.some(item => item.active && (item.companyId || '__master__') === tenantId && (!currentUnitId() || !item.unitId || item.unitId === currentUnitId()));
       const saved = await saveIntegrationConfig(params.id, {
         fields,
         enabled: active,
@@ -1309,7 +1449,7 @@ export const handler = router({
   'GET /api/open/v1/keys': [async () => {
     const tenantId = currentTenantId();
     const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
-    return json(result.items.filter(item => (item.companyId || '__master__') === tenantId).map(item => ({
+    return json(result.items.filter(item => (item.companyId || '__master__') === tenantId && (!currentUnitId() || !item.unitId || item.unitId === currentUnitId())).map(item => ({
       id: item.id,
       name: item.name,
       prefix: item.prefix,
@@ -1326,6 +1466,7 @@ export const handler = router({
     const prefix = key.slice(0, 16);
     const record: OpenApiKeyRecord = {
       companyId: currentTenantId(),
+      unitId: currentUnitId() || undefined,
       name: name.slice(0, 80),
       prefix,
       keyHash: hashApiKey(key),
@@ -1346,7 +1487,7 @@ export const handler = router({
   'DELETE /api/open/v1/keys/:id': [async ({ params }) => {
     const tenantId = currentTenantId();
     const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
-    const key = result.items.find(item => item.id === params.id && (item.companyId || '__master__') === tenantId);
+    const key = result.items.find(item => item.id === params.id && (item.companyId || '__master__') === tenantId && (!currentUnitId() || !item.unitId || item.unitId === currentUnitId()));
     if (!key) return error('Chave não encontrada', 404);
     const [ok] = await db.delete('mesa_open_api_keys', [params.id]);
     if (!ok) return error('Chave não encontrada', 404);
@@ -1358,7 +1499,7 @@ export const handler = router({
   'GET /api/open/v1/menu': [async ({ event }) => {
     const apiKey = await validateOpenApiKey(event);
     if (!apiKey) return error('API key inválida', 401);
-    const current = await get(apiKey.companyId || '__master__');
+    const current = await get(apiKey.companyId || '__master__', apiKey.unitId || '');
     return json(current.state.products.filter(product => product.active).map(product => ({
       id: product.id,
       sku: product.code || product.id,
@@ -1375,14 +1516,14 @@ export const handler = router({
   'GET /api/open/v1/tables': [async ({ event }) => {
     const apiKey = await validateOpenApiKey(event);
     if (!apiKey) return error('API key inválida', 401);
-    const current = await get(apiKey.companyId || '__master__');
+    const current = await get(apiKey.companyId || '__master__', apiKey.unitId || '');
     return json(current.state.tables);
   }],
 
   'GET /api/open/v1/orders': [async ({ event }) => {
     const apiKey = await validateOpenApiKey(event);
     if (!apiKey) return error('API key inválida', 401);
-    const current = await get(apiKey.companyId || '__master__');
+    const current = await get(apiKey.companyId || '__master__', apiKey.unitId || '');
     return json(current.state.orders.slice(0, 100));
   }],
 
@@ -1391,7 +1532,7 @@ export const handler = router({
     if (!apiKey) return error('API key inválida', 401);
     const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
-    const current = await get(apiKey.companyId || '__master__');
+    const current = await get(apiKey.companyId || '__master__', apiKey.unitId || '');
     const validated = validateOrderItems(current.state, value.items);
     if ('error' in validated) return error(String(validated.error), 400);
 
@@ -1408,7 +1549,7 @@ export const handler = router({
       code: '#API' + String(Date.now()).slice(-6),
       channel,
       companyId: apiKey.companyId || '__master__',
-      unitId: current.state.settings.unit,
+      unitId: apiKey.unitId || undefined,
       tableId: value.table ? current.state.tables.find(item => item.name === value.table)?.id : undefined,
       createdBy: 'API ' + apiKey.prefix,
       table: value.table,
@@ -1422,8 +1563,8 @@ export const handler = router({
     };
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido recebido pela API aberta', order.code + ' · ' + order.channel);
-    await save(current.id, current.state, apiKey.companyId || '__master__');
-    await notifyN8n(current.state, 'order.created_from_api', { order }, apiKey.companyId || '__master__');
+    await save(current.id, current.state, apiKey.companyId || '__master__', apiKey.unitId || '');
+    await notifyN8n(current.state, 'order.created_from_api', { order }, apiKey.companyId || '__master__', apiKey.unitId || '');
     return json(order, 201);
   }],
 
@@ -1438,7 +1579,7 @@ export const handler = router({
     const integrations = await listIntegrationConfigs();
     const tenantId = currentTenantId();
     const allApiKeys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
-    const apiKeys = { items: allApiKeys.items.filter(item => (item.companyId || '__master__') === tenantId) };
+    const apiKeys = { items: allApiKeys.items.filter(item => (item.companyId || '__master__') === tenantId && (!currentUnitId() || !item.unitId || item.unitId === currentUnitId())) };
 
     type QaStatus = 'pass' | 'warn' | 'fail';
     type QaCheck = { id: string; module: string; status: QaStatus; title: string; detail: string };
@@ -1753,7 +1894,8 @@ export const handler = router({
   'GET /api/customer/table/:code': [async ({ params }) => {
     if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
     const tenantId = customerTenantFromCode(params.code);
-    const current = await get(tenantId);
+    const unitId = customerUnitFromCode(params.code);
+    const current = await get(tenantId, unitId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
     const publicState = await withSignedImages(current.state);
@@ -1806,7 +1948,8 @@ export const handler = router({
     const value = body as { customer?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const tenantId = customerTenantFromCode(params.code);
-    const current = await get(tenantId);
+    const unitId = customerUnitFromCode(params.code);
+    const current = await get(tenantId, unitId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
     const validated = validateOrderItems(current.state, value.items);
@@ -1828,7 +1971,7 @@ export const handler = router({
       code: '#' + sequence,
       channel: 'Mesa',
       companyId: tenantId,
-      unitId: current.state.settings.unit,
+      unitId: unitId || undefined,
       tableId: table.id,
       createdBy: 'Cliente',
       table: table.name,
@@ -1842,8 +1985,8 @@ export const handler = router({
     };
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido enviado pelo cliente', order.code + ' · ' + table.name, 'Cliente');
-    await save(current.id, current.state, tenantId);
-    await notifyN8n(current.state, 'order.created_from_customer', { order, table }, tenantId);
+    await save(current.id, current.state, tenantId, unitId);
+    await notifyN8n(current.state, 'order.created_from_customer', { order, table }, tenantId, unitId);
     return json(order, 201);
   }],
 
@@ -1857,7 +2000,8 @@ export const handler = router({
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
 
     const tenantId = customerTenantFromCode(params.code);
-    const current = await get(tenantId);
+    const unitId = customerUnitFromCode(params.code);
+    const current = await get(tenantId, unitId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
 
@@ -1883,8 +2027,8 @@ export const handler = router({
       .forEach(order => { order.customer = customer!.name; });
 
     audit(current.state, 'customer', customer.id, 'Cliente conectado à mesa', customer.name + ' · ' + table.name, 'Cliente');
-    await save(current.id, current.state, tenantId);
-    await notifyN8n(current.state, 'customer.registered', { customer, table }, tenantId);
+    await save(current.id, current.state, tenantId, unitId);
+    await notifyN8n(current.state, 'customer.registered', { customer, table }, tenantId, unitId);
     return json(customer, 201);
   }],
 
@@ -1893,7 +2037,8 @@ export const handler = router({
     const value = body as { type?: 'waiter' | 'bill' };
     if (!value.type || !['waiter', 'bill'].includes(value.type)) return error('Solicitação inválida', 400);
     const tenantId = customerTenantFromCode(params.code);
-    const current = await get(tenantId);
+    const unitId = customerUnitFromCode(params.code);
+    const current = await get(tenantId, unitId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
     const existing = current.state.serviceRequests.find(request => request.table === table.name && request.type === value.type && request.status === 'pending');
@@ -1907,8 +2052,8 @@ export const handler = router({
     };
     current.state.serviceRequests.unshift(request);
     audit(current.state, 'table', table.id, value.type === 'bill' ? 'Conta solicitada pelo cliente' : 'Garçom solicitado pelo cliente', table.name, 'Cliente');
-    await save(current.id, current.state, tenantId);
-    await notifyN8n(current.state, 'table.customer_request', { request, table }, tenantId);
+    await save(current.id, current.state, tenantId, unitId);
+    await notifyN8n(current.state, 'table.customer_request', { request, table }, tenantId, unitId);
     return json(request, 201);
   }],
 
@@ -2026,7 +2171,7 @@ export const handler = router({
     const current = await get();
     const product = current.state.products.find(item => item.id === params.id);
     if (!product) return error('Produto não encontrado', 404);
-    const path = 'tenants/' + currentTenantId() + '/catalog/products/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
+    const path = 'tenants/' + currentTenantId() + '/' + (currentUnitId() || 'primary') + '/catalog/products/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
     const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
     if (!ok) return error('Falha ao salvar imagem', 500);
     if (product.imagePath) await storage.delete([product.imagePath]);
@@ -2087,7 +2232,7 @@ export const handler = router({
     const current = await get();
     const category = current.state.menuCategories.find(item => item.id === params.id);
     if (!category) return error('Categoria não encontrada', 404);
-    const path = 'tenants/' + currentTenantId() + '/catalog/categories/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
+    const path = 'tenants/' + currentTenantId() + '/' + (currentUnitId() || 'primary') + '/catalog/categories/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
     const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
     if (!ok) return error('Falha ao salvar imagem', 500);
     if (category.imagePath) await storage.delete([category.imagePath]);
@@ -2149,7 +2294,7 @@ export const handler = router({
       code: '#' + sequence,
       channel,
       companyId: session?.companyId || currentTenantId(),
-      unitId: current.state.settings.unit,
+      unitId: session?.unitId || currentUnitId() || undefined,
       tableId: orderTable?.id,
       createdBy: session?.userId || session?.name || 'Sistema',
       table: channel === 'Mesa' ? value.table : undefined,
