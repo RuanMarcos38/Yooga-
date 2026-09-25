@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, apiBaseUrl } from './lib/api';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -1139,6 +1140,8 @@ function MenuBuilderView(props: ViewProps) {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrTable, setQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
   const categories = [...props.data.menuCategories].sort((a, b) => a.order - b.order);
   const lowStock = props.data.products.filter(product => product.stock <= 5).length;
   const lowMargin = props.data.products.filter(product => product.cost && product.price > 0 && ((product.price - product.cost) / product.price) * 100 < 35).length;
@@ -1173,7 +1176,7 @@ function MenuBuilderView(props: ViewProps) {
       <div className="mb-4 flex flex-wrap gap-2">
         <button onClick={() => { setEditingProduct(null); setProductOpen(true); }} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Novo produto</button>
         <button onClick={() => { setEditingCategory(null); setCategoryOpen(true); }} className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><Layers3 size={15} />Nova categoria</button>
-        <button className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><QrCode size={15} />Pré-visualizar QR</button>
+        <button onClick={() => setQrOpen(true)} className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><QrCode size={15} />Pré-visualizar QR</button>
         <button className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><BrainCircuit size={15} />Smart Ops: sugerir margem</button>
       </div>
 
@@ -1216,6 +1219,30 @@ function MenuBuilderView(props: ViewProps) {
 
       {productOpen && <ProductEditor product={editingProduct} categories={categories} run={props.run} onClose={() => setProductOpen(false)} />}
       {categoryOpen && <CategoryEditor category={editingCategory} run={props.run} onClose={() => setCategoryOpen(false)} />}
+      {qrOpen && (() => {
+        const link = window.location.origin + '/?cliente=' + encodeURIComponent(qrTable);
+        return (
+          <Modal title="QR Code do cardápio" onClose={() => setQrOpen(false)}>
+            <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+              <div className="grid place-items-center rounded-xl border border-[#e5e8ea] bg-white p-4">
+                <QRCodeSVG value={link} size={190} level="M" includeMargin title={'QR ' + qrTable} />
+              </div>
+              <div className="space-y-3">
+                <Field label="Mesa">
+                  <select value={qrTable} onChange={event => setQrTable(event.target.value)} className="control">
+                    {props.data.tables.map(table => <option key={table.id} value={table.name}>{table.name}</option>)}
+                  </select>
+                </Field>
+                <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Este QR abre diretamente o cardápio e atendimento da mesa selecionada.</div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => void navigator.clipboard.writeText(link)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link</button>
+                  <button onClick={() => window.open(link, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Testar QR / link</button>
+                </div>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </PageSection>
   );
 }
@@ -2500,7 +2527,20 @@ type OpenApiKeyInfo = {
   createdAt: string;
 };
 
-type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'marketing' | 'print' | 'tools' | 'open-api';
+type CompanyInfo = {
+  id: string;
+  name: string;
+  document?: string;
+  email?: string;
+  phone?: string;
+  contactName?: string;
+  plan?: string;
+  status: 'Ativa' | 'Inativa' | 'Teste';
+  createdAt: string;
+  updatedAt: string;
+};
+
+type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'marketing' | 'print' | 'tools' | 'open-api' | 'companies' | 'qr';
 
 const integrationCatalog = [
   { id: 'n8n', name: 'n8n / WhatsApp', category: 'Automação', description: 'Webhook para avisar cliente e operação sobre cadastro, mesa, pedido pronto e mudança de status.', badge: 'Webhook', icon: MessageCircle },
@@ -2536,6 +2576,11 @@ function SettingsView(props: ViewProps) {
   const [newApiKey, setNewApiKey] = useState('');
   const [apiKeyName, setApiKeyName] = useState('Integração principal');
   const [printMessage, setPrintMessage] = useState('');
+  const [companies, setCompanies] = useState<CompanyInfo[]>([]);
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [editingCompany, setEditingCompany] = useState<CompanyInfo | null>(null);
+  const [companyForm, setCompanyForm] = useState({ name: '', document: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' as CompanyInfo['status'] });
+  const [settingsQrTable, setSettingsQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
 
   const saveGeneral = async () => {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
@@ -2558,12 +2603,48 @@ function SettingsView(props: ViewProps) {
     setApiKeys(response.data as OpenApiKeyInfo[]);
   };
 
+  const loadCompanies = async () => {
+    const response = await api.get('/api/companies');
+    setCompanies(response.data as CompanyInfo[]);
+  };
+
+  const openCompany = (company?: CompanyInfo) => {
+    setEditingCompany(company || null);
+    setCompanyForm(company ? {
+      name: company.name,
+      document: company.document || '',
+      email: company.email || '',
+      phone: company.phone || '',
+      contactName: company.contactName || '',
+      plan: company.plan || '',
+      status: company.status,
+    } : { name: '', document: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' });
+    setCompanyOpen(true);
+  };
+
+  const saveCompany = async () => {
+    if (!companyForm.name.trim()) return;
+    if (editingCompany) await api.put('/api/companies/' + editingCompany.id, companyForm);
+    else await api.post('/api/companies', companyForm);
+    setCompanyOpen(false);
+    await loadCompanies();
+  };
+
+  const deleteCompany = async (company: CompanyInfo) => {
+    if (!confirm('Excluir a empresa ' + company.name + '?')) return;
+    await api.delete('/api/companies/' + company.id);
+    await loadCompanies();
+  };
+
   useEffect(() => {
     if (section === 'integrations' || section === 'open-api') {
       void loadIntegrations().catch(() => setIntegrationMessage('Não foi possível carregar as integrações.'));
     }
     if (section === 'open-api') {
       void loadApiKeys().catch(() => setIntegrationMessage('Não foi possível carregar as chaves da API.'));
+    }
+    if (section === 'companies') {
+      void loadCompanies().catch(() => setIntegrationMessage('Não foi possível carregar as empresas.'));
     }
   }, [section]);
 
@@ -2753,6 +2834,79 @@ function SettingsView(props: ViewProps) {
             <ApiEndpoint method="GET" path={origin + '/api/open/v1/orders'} note="Pedidos" />
             <ApiEndpoint method="POST" path={origin + '/api/open/v1/orders'} note="Criar pedido por integração" />
             <div className="mt-4 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[9px] leading-4 text-[#35667d]"><b>Webhooks:</b> conectores externos podem enviar pedidos para o endpoint POST de pedidos usando uma chave própria. A API valida os produtos e calcula os valores com o cadastro interno.</div>
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
+  if (section === 'companies') {
+    return (
+      <section>
+        <SettingsBack title="Empresas contratantes" onBack={showHub} subtitle="Cadastre e acompanhe as empresas que utilizam a plataforma" />
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="grid grid-cols-3 gap-2">
+            <MiniStat label="Total" value={String(companies.length)} />
+            <MiniStat label="Ativas" value={String(companies.filter(item => item.status === 'Ativa').length)} />
+            <MiniStat label="Em teste" value={String(companies.filter(item => item.status === 'Teste').length)} />
+          </div>
+          <button onClick={() => openCompany()} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Cadastrar empresa</button>
+        </div>
+        <Surface>
+          <SectionHead title="Empresas cadastradas" subtitle="Contrato, contato e situação de acesso à ferramenta" />
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left">
+              <thead><tr className="border-b text-[9px] uppercase text-slate-400"><th className="py-3">Empresa</th><th>Contato</th><th>Plano</th><th>Status</th><th className="text-right">Ações</th></tr></thead>
+              <tbody>
+                {companies.map(company => (
+                  <tr key={company.id} className="border-b border-[#f0eeea] text-[10px]">
+                    <td className="py-3"><b className="block text-xs">{company.name}</b><span className="text-slate-400">{company.document || 'Documento não informado'}</span></td>
+                    <td><b className="block">{company.contactName || 'Responsável não informado'}</b><span className="text-slate-400">{company.email || company.phone || 'Sem contato'}</span></td>
+                    <td>{company.plan || 'Padrão'}</td>
+                    <td><Badge value={company.status} /></td>
+                    <td><div className="flex justify-end gap-2"><button onClick={() => openCompany(company)} className="rounded-lg border px-3 py-2 font-semibold">Editar</button><button onClick={() => void deleteCompany(company)} className="rounded-lg border border-red-100 px-3 py-2 font-semibold text-red-500">Excluir</button></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {companies.length === 0 && <div className="py-8 text-center text-xs text-slate-400">Nenhuma empresa cadastrada.</div>}
+          </div>
+        </Surface>
+        {companyOpen && (
+          <Modal title={editingCompany ? 'Editar empresa' : 'Cadastrar empresa'} onClose={() => setCompanyOpen(false)}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Nome da empresa"><input value={companyForm.name} onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })} className="control" /></Field>
+              <Field label="CNPJ / Documento"><input value={companyForm.document} onChange={e => setCompanyForm({ ...companyForm, document: e.target.value })} className="control" /></Field>
+              <Field label="Responsável"><input value={companyForm.contactName} onChange={e => setCompanyForm({ ...companyForm, contactName: e.target.value })} className="control" /></Field>
+              <Field label="E-mail"><input type="email" value={companyForm.email} onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })} className="control" /></Field>
+              <Field label="Telefone"><input value={companyForm.phone} onChange={e => setCompanyForm({ ...companyForm, phone: e.target.value })} className="control" /></Field>
+              <Field label="Plano"><input value={companyForm.plan} onChange={e => setCompanyForm({ ...companyForm, plan: e.target.value })} placeholder="Ex.: Profissional" className="control" /></Field>
+              <Field label="Status"><select value={companyForm.status} onChange={e => setCompanyForm({ ...companyForm, status: e.target.value as CompanyInfo['status'] })} className="control"><option>Ativa</option><option>Teste</option><option>Inativa</option></select></Field>
+            </div>
+            <div className="mt-5 flex justify-end gap-2"><button onClick={() => setCompanyOpen(false)} className="rounded-xl border px-4 py-3 text-[10px] font-semibold">Cancelar</button><button onClick={() => void saveCompany()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-[10px] font-bold text-white">Salvar empresa</button></div>
+          </Modal>
+        )}
+      </section>
+    );
+  }
+
+  if (section === 'qr') {
+    const qrLink = window.location.origin + '/?cliente=' + encodeURIComponent(settingsQrTable);
+    return (
+      <section>
+        <SettingsBack title="Cardápio QR Code" onBack={showHub} subtitle="Gere, teste e copie o acesso de cada mesa" />
+        <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
+          <Surface>
+            <div className="grid place-items-center rounded-xl bg-white p-3"><QRCodeSVG value={qrLink} size={240} level="M" includeMargin title={'QR ' + settingsQrTable} /></div>
+          </Surface>
+          <Surface>
+            <SectionHead title="QR por mesa" subtitle="O código aponta para o portal real do cliente." />
+            <Field label="Mesa"><select value={settingsQrTable} onChange={e => setSettingsQrTable(e.target.value)} className="control">{props.data.tables.map(table => <option key={table.id} value={table.name}>{table.name}</option>)}</select></Field>
+            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d] break-all">{qrLink}</div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button onClick={() => void navigator.clipboard.writeText(qrLink)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link</button>
+              <button onClick={() => window.open(qrLink, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Testar acesso</button>
+            </div>
           </Surface>
         </div>
       </section>
@@ -2949,7 +3103,7 @@ function SettingsView(props: ViewProps) {
 
       <SettingsGroup title="Cadastros">
         <AjusteTile icon={<CircleDollarSign size={29} />} title="Pagamentos" onClick={() => setSection('payments')} />
-        <AjusteTile icon={<QrCode size={29} />} title="Cardápio QR Code" onClick={routeTile('menu')} />
+        <AjusteTile icon={<QrCode size={29} />} title="Cardápio QR Code" onClick={() => setSection('qr')} />
         <AjusteTile icon={<Package size={29} />} title="Produtos" onClick={routeTile('products')} />
         <AjusteTile icon={<Layers3 size={29} />} title="Categorias" onClick={routeTile('menu')} />
         <AjusteTile icon={<Users size={29} />} title="Clientes" onClick={routeTile('customers')} />
@@ -2977,6 +3131,7 @@ function SettingsView(props: ViewProps) {
 
       <SettingsGroup title="Configurações">
         <AjusteTile icon={<Settings size={29} />} title="Geral" onClick={() => setSection('general')} />
+        <AjusteTile icon={<Store size={29} />} title="Empresas contratantes" onClick={() => setSection('companies')} />
         <AjusteTile icon={<UserCog size={29} />} title="Acessos" onClick={() => setSection('access')} />
         <AjusteTile icon={<Printer size={29} />} title="Impressoras" onClick={() => setSection('print')} />
         <AjusteTile icon={<KeyRound size={29} />} title="API Aberta" onClick={() => setSection('open-api')} />
