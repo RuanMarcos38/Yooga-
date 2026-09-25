@@ -576,7 +576,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           <button onClick={() => setOnlyAvailable(value => !value)} className={'hidden h-10 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white sm:flex ' + (onlyAvailable ? 'bg-[#d84f31]' : 'bg-[#f45f3f]')}>
             Filtro <SlidersHorizontal size={14} />
           </button>
-          <button className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
+          <button title="Ver solicitações das mesas" onClick={() => setPage('tables')} className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
           <button onClick={onLogout} className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('') || 'TF'}</span>
             <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">{session.companyName || 'TAPFOOD'} · {session.role} · {data.settings.unit}</small></span>
@@ -1085,11 +1085,11 @@ function TableOrderWorkspace(props: ViewProps) {
             <div className="flex justify-between py-1 text-sm"><b>Restante</b><b>{BRL(total)}</b></div>
 
             <div className="mt-4 grid grid-cols-5 gap-2">
-              <QuickIcon icon={<Trash2 size={16} />} />
-              <QuickIcon icon={<Percent size={16} />} />
-              <QuickIcon icon={<WalletCards size={16} />} />
-              <QuickIcon icon={<ReceiptText size={16} />} />
-              <QuickIcon icon={<Printer size={16} />} />
+              <QuickIcon title="Limpar pedido" icon={<Trash2 size={16} />} onClick={() => props.cart.forEach(item => props.changeQty(item.productId, -item.qty))} />
+              <QuickIcon title="Configurar taxa" icon={<Percent size={16} />} onClick={() => props.setPage('settings')} />
+              <QuickIcon title="Selecionar pagamento" icon={<WalletCards size={16} />} onClick={() => props.setPayment(props.data.settings.pixEnabled ? 'Pix' : props.data.settings.cardEnabled ? 'Cartão' : 'Dinheiro')} />
+              <QuickIcon title="Ver histórico" icon={<ReceiptText size={16} />} onClick={() => props.setPage('history')} />
+              <QuickIcon title="Testar impressão" icon={<Printer size={16} />} onClick={() => void props.run(() => api.post('/api/printers/test', { station: props.data.settings.kitchenPrinter }), 'Teste de impressão enviado.')} />
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2">
@@ -1098,7 +1098,7 @@ function TableOrderWorkspace(props: ViewProps) {
               {props.data.settings.cashEnabled && <button onClick={() => props.setPayment('Dinheiro')} className={'rounded-lg border py-2 text-[9px] font-semibold ' + (props.payment === 'Dinheiro' ? 'border-[#1da878] bg-[#effcf7] text-[#13865f]' : '')}>Dinheiro</button>}
             </div>
 
-            <button className="mt-3 w-full rounded-xl bg-[#7dc8ef] py-4 text-sm font-semibold text-[#175071]">+ Adicionar Pagamento</button>
+            <button onClick={() => props.setPayment(props.data.settings.pixEnabled ? 'Pix' : props.data.settings.cardEnabled ? 'Cartão' : 'Dinheiro')} className="mt-3 w-full rounded-xl bg-[#7dc8ef] py-4 text-sm font-semibold text-[#175071]">+ Adicionar Pagamento</button>
           </div>
         </aside>
 
@@ -1177,7 +1177,16 @@ function MenuBuilderView(props: ViewProps) {
         <button onClick={() => { setEditingProduct(null); setProductOpen(true); }} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Novo produto</button>
         <button onClick={() => { setEditingCategory(null); setCategoryOpen(true); }} className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><Layers3 size={15} />Nova categoria</button>
         <button onClick={() => setQrOpen(true)} className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><QrCode size={15} />Pré-visualizar QR</button>
-        <button className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><BrainCircuit size={15} />Smart Ops: sugerir margem</button>
+        <button onClick={() => {
+          const suggestions = props.data.products
+            .filter(product => Number(product.cost || 0) > 0)
+            .map(product => ({ name: product.name, current: product.price, suggested: Number((Number(product.cost || 0) / 0.65).toFixed(2)) }))
+            .filter(item => item.current < item.suggested)
+            .slice(0, 8);
+          alert(suggestions.length
+            ? 'Sugestões para margem mínima de 35%:\n\n' + suggestions.map(item => item.name + ': ' + BRL(item.current) + ' → ' + BRL(item.suggested)).join('\n')
+            : 'Nenhum produto com custo informado está abaixo de 35% de margem.');
+        }} className="flex items-center gap-2 rounded-xl border border-[#d9dadd] bg-white px-4 py-3 text-xs font-semibold"><BrainCircuit size={15} />Smart Ops: sugerir margem</button>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[250px_1fr]">
@@ -1440,8 +1449,8 @@ function SettingToggle({ icon, title, subtitle, enabled, onClick }: { icon: Reac
   return <button onClick={onClick} className="flex w-full items-center gap-3 border-t border-[#f0efec] py-3 text-left first:border-t-0"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#e85b3a]">{icon}</span><span className="min-w-0 flex-1"><b className="block text-xs">{title}</b><small className="text-[9px] text-slate-400">{subtitle}</small></span><span className={'relative h-6 w-11 rounded-full transition ' + (enabled ? 'bg-emerald-500' : 'bg-slate-300')}><span className={'absolute top-1 h-4 w-4 rounded-full bg-white transition ' + (enabled ? 'left-6' : 'left-1')} /></span></button>;
 }
 
-function QuickIcon({ icon }: { icon: ReactNode }) {
-  return <button className="grid h-12 place-items-center rounded-xl bg-[#f4f5f5] text-[#566066]">{icon}</button>;
+function QuickIcon({ icon, title, onClick }: { icon: ReactNode; title: string; onClick: () => void }) {
+  return <button title={title} aria-label={title} onClick={onClick} className="grid h-12 place-items-center rounded-xl bg-[#f4f5f5] text-[#566066] transition hover:bg-[#e9edef]">{icon}</button>;
 }
 
 type CustomerPortalData = {
@@ -2256,7 +2265,10 @@ function HistoryView(props: ViewProps) {
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por forma de pagamento ou valor..." className="min-w-0 flex-1 text-xs outline-none" />
             <Search size={17} className="text-[#596166]" />
           </label>
-          <button className="flex h-11 items-center gap-1 rounded-lg border border-[#9fa7ad] px-3 text-[10px] font-semibold text-[#697178]">Filtrar <SlidersHorizontal size={14} /></button>
+          <button onClick={() => {
+            const value = prompt('Filtrar relatório por cliente, canal, pagamento ou valor:', query);
+            if (value !== null) setQuery(value.trim());
+          }} className="flex h-11 items-center gap-1 rounded-lg border border-[#9fa7ad] px-3 text-[10px] font-semibold text-[#697178]">Filtrar <SlidersHorizontal size={14} /></button>
         </div>
 
         {tab === 'sales' && (
