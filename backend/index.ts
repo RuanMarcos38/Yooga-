@@ -628,10 +628,10 @@ const sanitizeIntegrationFields = (raw: unknown) => {
   return output;
 };
 
-async function listIntegrationConfigs() {
-  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations'), { limit: 50 });
+async function listIntegrationConfigs(tenantId = currentTenantId()) {
+  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId), { limit: 50 });
   const map = new Map(result.items.map(item => [item.providerId, item]));
-  const current = await get();
+  const current = await get(tenantId);
 
   return integrationIds.map(providerId => {
     const item = map.get(providerId);
@@ -669,8 +669,8 @@ async function listIntegrationConfigs() {
   });
 }
 
-async function saveIntegrationConfig(providerId: string, patch: Partial<IntegrationConfig>) {
-  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations'), { limit: 50 });
+async function saveIntegrationConfig(providerId: string, patch: Partial<IntegrationConfig>, tenantId = currentTenantId()) {
+  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId), { limit: 50 });
   const existing = result.items.find(item => item.providerId === providerId);
   const record: IntegrationConfig = {
     providerId,
@@ -681,10 +681,10 @@ async function saveIntegrationConfig(providerId: string, patch: Partial<Integrat
     message: patch.message ?? existing?.message,
   };
   if (existing) {
-    const [ok] = await db.update(tenantCollection('mesa_integrations'), [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
+    const [ok] = await db.update(tenantCollection('mesa_integrations', tenantId), [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
     if (!ok) throw new Error('integration update failed');
   } else {
-    const [id] = await db.add(tenantCollection('mesa_integrations'), [record as unknown as Record<string, unknown>]);
+    const [id] = await db.add(tenantCollection('mesa_integrations', tenantId), [record as unknown as Record<string, unknown>]);
     if (!id) throw new Error('integration create failed');
   }
   return { id: providerId, ...record };
@@ -712,9 +712,9 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   return 'configured';
 }
 
-async function notifyN8n(state: S, event: string, payload: Record<string, unknown>) {
+async function notifyN8n(state: S, event: string, payload: Record<string, unknown>, tenantId = currentTenantId()) {
   try {
-    const integrations = await listIntegrationConfigs();
+    const integrations = await listIntegrationConfigs(tenantId);
     const n8n = integrations.find(item => item.id === 'n8n');
     const webhookUrl = n8n?.fields?.webhookUrl;
     if (!n8n?.enabled || !webhookUrl || n8n.status === 'Erro') return;
@@ -1086,8 +1086,9 @@ export const handler = router({
     const fields = current?.fields || {};
 
     if (params.id === 'open-api') {
-      const keys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
-      const active = keys.items.some(item => item.active);
+      const tenantId = currentTenantId();
+      const keys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
+      const active = keys.items.some(item => item.active && (item.companyId || '__master__') === tenantId);
       const saved = await saveIntegrationConfig(params.id, {
         fields,
         enabled: active,
@@ -1248,7 +1249,7 @@ export const handler = router({
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido recebido pela API aberta', order.code + ' · ' + order.channel);
     await save(current.id, current.state, apiKey.companyId || '__master__');
-    await notifyN8n(current.state, 'order.created_from_api', { order });
+    await notifyN8n(current.state, 'order.created_from_api', { order }, apiKey.companyId || '__master__');
     return json(order, 201);
   }],
 
@@ -1261,7 +1262,9 @@ export const handler = router({
     const current = await get();
     const state = current.state;
     const integrations = await listIntegrationConfigs();
-    const apiKeys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
+    const tenantId = currentTenantId();
+    const allApiKeys = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
+    const apiKeys = { items: allApiKeys.items.filter(item => (item.companyId || '__master__') === tenantId) };
 
     type QaStatus = 'pass' | 'warn' | 'fail';
     type QaCheck = { id: string; module: string; status: QaStatus; title: string; detail: string };
@@ -1660,7 +1663,7 @@ export const handler = router({
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido enviado pelo cliente', order.code + ' · ' + table.name, 'Cliente');
     await save(current.id, current.state, tenantId);
-    await notifyN8n(current.state, 'order.created_from_customer', { order, table });
+    await notifyN8n(current.state, 'order.created_from_customer', { order, table }, tenantId);
     return json(order, 201);
   }],
 
@@ -1700,7 +1703,7 @@ export const handler = router({
 
     audit(current.state, 'customer', customer.id, 'Cliente conectado à mesa', customer.name + ' · ' + table.name, 'Cliente');
     await save(current.id, current.state, tenantId);
-    await notifyN8n(current.state, 'customer.registered', { customer, table });
+    await notifyN8n(current.state, 'customer.registered', { customer, table }, tenantId);
     return json(customer, 201);
   }],
 
@@ -1723,7 +1726,7 @@ export const handler = router({
     current.state.serviceRequests.unshift(request);
     audit(current.state, 'table', table.id, value.type === 'bill' ? 'Conta solicitada pelo cliente' : 'Garçom solicitado pelo cliente', table.name, 'Cliente');
     await save(current.id, current.state, tenantId);
-    await notifyN8n(current.state, 'table.customer_request', { request, table });
+    await notifyN8n(current.state, 'table.customer_request', { request, table }, tenantId);
     return json(request, 201);
   }],
 
@@ -1841,7 +1844,7 @@ export const handler = router({
     const current = await get();
     const product = current.state.products.find(item => item.id === params.id);
     if (!product) return error('Produto não encontrado', 404);
-    const path = 'catalog/products/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
+    const path = 'tenants/' + currentTenantId() + '/catalog/products/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
     const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
     if (!ok) return error('Falha ao salvar imagem', 500);
     if (product.imagePath) await storage.delete([product.imagePath]);
@@ -1902,7 +1905,7 @@ export const handler = router({
     const current = await get();
     const category = current.state.menuCategories.find(item => item.id === params.id);
     if (!category) return error('Categoria não encontrada', 404);
-    const path = 'catalog/categories/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
+    const path = 'tenants/' + currentTenantId() + '/catalog/categories/' + params.id + '-' + Date.now() + '.' + validatedImage.extension;
     const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
     if (!ok) return error('Falha ao salvar imagem', 500);
     if (category.imagePath) await storage.delete([category.imagePath]);
