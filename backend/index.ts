@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { ai, db, storage, router, json, error } from './appdeploy-compat.js';
+import { ai, db, storage, router, json, error, currentRequestHeaders } from './appdeploy-compat.js';
 
 type P = {
   id: string;
@@ -133,6 +133,19 @@ type CompanyRecord = {
   contactName?: string;
   plan?: string;
   status: 'Ativa' | 'Inativa' | 'Teste';
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PlatformUserRecord = {
+  id: string;
+  companyId: string;
+  name: string;
+  email: string;
+  role: 'Administrador' | 'Gestor' | 'Operador';
+  status: 'Ativo' | 'Inativo';
+  passwordSalt: string;
+  passwordHash: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -435,14 +448,45 @@ async function withSignedImages(state: S): Promise<S> {
   };
 }
 
-function audit(state: S, entity: string, entityId: string, action: string, detail: string, user = 'Administrador') {
+function sessionFromAuthorization() {
+  const headers = currentRequestHeaders();
+  const authorization = headers.authorization || headers.Authorization || '';
+  const token = String(authorization).replace(/^Bearer\s+/i, '').trim();
+  if (!token || !token.includes('.')) return null;
+  const [base, signature] = token.split('.');
+  const expected = createHash('sha256').update(base + (process.env.AUTH_SECRET || 'tapfood-auth-secret')).digest('base64url');
+  if (signature !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(base, 'base64url').toString('utf8')) as {
+      name?: string;
+      email?: string;
+      role?: string;
+      userId?: string;
+      companyId?: string;
+      companyName?: string;
+      expiresAt?: string;
+    };
+    if (payload.expiresAt && Date.parse(payload.expiresAt) < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function currentAuditUser() {
+  const session = sessionFromAuthorization();
+  if (!session) return 'Administrador';
+  return session.name || session.email || 'Usuário autenticado';
+}
+
+function audit(state: S, entity: string, entityId: string, action: string, detail: string, user?: string) {
   state.auditLog.unshift({
     id: 'a' + Date.now() + Math.random().toString(36).slice(2, 6),
     entity,
     entityId,
     action,
     detail,
-    user,
+    user: user || currentAuditUser(),
     createdAt: new Date().toISOString(),
   });
   state.auditLog = state.auditLog.slice(0, 200);
@@ -463,10 +507,24 @@ function signSession(payload: Record<string, unknown>) {
   return base + '.' + signature;
 }
 
-function authSession(payload: { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string }) {
+function authSession(payload: { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string }) {
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
   const session = { ...payload, expiresAt };
   return { ...session, token: signSession(session) };
+}
+
+function hashPlatformPassword(password: string, salt: string) {
+  return createHash('sha256').update(salt + ':' + password + ':' + (process.env.AUTH_SECRET || 'tapfood-auth-secret')).digest('hex');
+}
+
+function createPasswordCredentials(password: string) {
+  const salt = randomBytes(16).toString('hex');
+  return { passwordSalt: salt, passwordHash: hashPlatformPassword(password, salt) };
+}
+
+async function findPlatformUserByEmail(email: string) {
+  const result = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
+  return result.items.find(item => item.email.toLowerCase() === email.toLowerCase());
 }
 
 function applyProduct(product: P, value: Partial<P>): P {
@@ -751,7 +809,7 @@ export const handler = router({
     message: 'Success',
     service: 'TAPFOOD Backend',
     version: '2026.09.20',
-    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
+    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'users', 'audit', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
   })],
 
   'POST /api/auth/login': [async ({ body }) => {
@@ -771,18 +829,115 @@ export const handler = router({
       }));
     }
 
+    const email = String(value.email || '').trim().toLowerCase();
+    const platformUser = email ? await findPlatformUserByEmail(email) : undefined;
+    if (platformUser) {
+      if (platformUser.status !== 'Ativo') return error('Usuário inativo', 403);
+      if (hashPlatformPassword(password, platformUser.passwordSalt) !== platformUser.passwordHash) return error('Credenciais inválidas', 401);
+      const companies = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+      const company = companies.items.find(item => item.id === platformUser.companyId);
+      if (!company) return error('Empresa vinculada não encontrada', 403);
+      if (company.status === 'Inativa') return error('Acesso da empresa está inativo', 403);
+      return json(authSession({
+        mode: 'empresa',
+        name: platformUser.name,
+        role: platformUser.role,
+        email: platformUser.email,
+        userId: platformUser.id,
+        companyId: company.id,
+        companyName: company.name,
+      }));
+    }
+
     const adminEmail = (process.env.ADMIN_EMAIL || 'admin@tapfood.com.br').toLowerCase();
     const adminPassword = process.env.ADMIN_PASSWORD || 'TapFood@2026';
-    if (String(value.email || '').trim().toLowerCase() !== adminEmail || password !== adminPassword) {
+    if (email !== adminEmail || password !== adminPassword) {
       return error('Credenciais inválidas', 401);
     }
 
     return json(authSession({
       mode: 'empresa',
       name: 'Administrador TAPFOOD',
-      role: 'Administrador',
+      role: 'Super Admin',
       email: adminEmail,
+      companyName: 'TAPFOOD',
     }));
+  }],
+
+  'GET /api/platform-users': [async () => {
+    const users = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
+    const companies = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+    const companyMap = new Map(companies.items.map(item => [item.id, item.name]));
+    return json(users.items
+      .map(({ passwordHash, passwordSalt, ...user }) => ({ ...user, companyName: companyMap.get(user.companyId) || 'Empresa não encontrada' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+  }],
+
+  'POST /api/platform-users': [async ({ body }) => {
+    const value = body as Partial<PlatformUserRecord> & { password?: string };
+    const name = String(value.name || '').trim();
+    const email = String(value.email || '').trim().toLowerCase();
+    const password = String(value.password || '');
+    const companyId = String(value.companyId || '');
+    if (!name || !email || !companyId) return error('Nome, e-mail e empresa são obrigatórios', 400);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+    if (password.length < 6) return error('A senha deve ter no mínimo 6 caracteres', 400);
+    const companies = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+    if (!companies.items.some(item => item.id === companyId)) return error('Empresa não encontrada', 404);
+    if (await findPlatformUserByEmail(email)) return error('Já existe um usuário com este e-mail', 409);
+    const credentials = createPasswordCredentials(password);
+    const now = new Date().toISOString();
+    const ids = await db.add('tapfood_platform_users', [{
+      companyId,
+      name: name.slice(0, 120),
+      email: email.slice(0, 160),
+      role: ['Administrador', 'Gestor', 'Operador'].includes(String(value.role)) ? value.role : 'Operador',
+      status: value.status === 'Inativo' ? 'Inativo' : 'Ativo',
+      ...credentials,
+      createdAt: now,
+      updatedAt: now,
+    }]);
+    return json({ id: ids[0], companyId, name, email, role: value.role || 'Operador', status: value.status || 'Ativo', createdAt: now, updatedAt: now }, 201);
+  }],
+
+  'PUT /api/platform-users/:id': [async ({ params, body }) => {
+    const value = body as Partial<PlatformUserRecord> & { password?: string };
+    const result = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
+    const current = result.items.find(item => item.id === params.id);
+    if (!current) return error('Usuário não encontrado', 404);
+    const email = String(value.email ?? current.email).trim().toLowerCase();
+    const name = String(value.name ?? current.name).trim();
+    const companyId = String(value.companyId ?? current.companyId);
+    if (!name || !email || !companyId) return error('Nome, e-mail e empresa são obrigatórios', 400);
+    const duplicate = result.items.find(item => item.id !== current.id && item.email.toLowerCase() === email);
+    if (duplicate) return error('Já existe outro usuário com este e-mail', 409);
+    let passwordSalt = current.passwordSalt;
+    let passwordHash = current.passwordHash;
+    if (value.password) {
+      if (String(value.password).length < 6) return error('A senha deve ter no mínimo 6 caracteres', 400);
+      const credentials = createPasswordCredentials(String(value.password));
+      passwordSalt = credentials.passwordSalt;
+      passwordHash = credentials.passwordHash;
+    }
+    const next = {
+      companyId,
+      name: name.slice(0, 120),
+      email: email.slice(0, 160),
+      role: ['Administrador', 'Gestor', 'Operador'].includes(String(value.role ?? current.role)) ? (value.role ?? current.role) : current.role,
+      status: value.status === 'Inativo' ? 'Inativo' : 'Ativo',
+      passwordSalt,
+      passwordHash,
+      createdAt: current.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.update('tapfood_platform_users', [{ id: current.id, record: next }]);
+    return json({ id: current.id, ...next, passwordSalt: undefined, passwordHash: undefined });
+  }],
+
+  'DELETE /api/platform-users/:id': [async ({ params }) => {
+    const [deleted] = await db.delete('tapfood_platform_users', [params.id]);
+    if (!deleted) return error('Usuário não encontrado', 404);
+    return json({ success: true });
   }],
 
   'GET /api/companies': [async () => {
