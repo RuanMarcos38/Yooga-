@@ -42,21 +42,41 @@ const companyB = await call('POST', '/api/companies', {
   status: 'Ativa',
 }, master.token);
 
+const unitA2 = await call('POST', '/api/units', {
+  companyId: companyA.id,
+  name: 'Filial QA 2 ' + suffix,
+  address: 'Rua Filial QA, 222, Joinville - SC, 89200-000',
+  phone: '47999990003',
+  email: 'filial-a2-' + suffix + '@tapfood.local',
+  status: 'Ativa',
+}, master.token);
+
+const unitsA = await call('GET', '/api/units', undefined, master.token);
+const unitA1 = unitsA.find(unit => unit.companyId === companyA.id && unit.id !== unitA2.id);
+if (!unitA1 || !unitA2?.id) throw new Error('Company units were not created');
+
 const password = 'TenantQA@2026';
 const userAEmail = 'qa-a-' + suffix + '@tapfood.local';
+const userA2Email = 'qa-a2-' + suffix + '@tapfood.local';
 const userBEmail = 'qa-b-' + suffix + '@tapfood.local';
 
 await call('POST', '/api/platform-users', {
-  companyId: companyA.id, name: 'QA Empresa A', email: userAEmail, password, role: 'Administrador', status: 'Ativo',
+  companyId: companyA.id, unitId: unitA1.id, name: 'QA Empresa A', email: userAEmail, password, role: 'Administrador', status: 'Ativo',
+}, master.token);
+await call('POST', '/api/platform-users', {
+  companyId: companyA.id, unitId: unitA2.id, name: 'QA Empresa A Filial 2', email: userA2Email, password, role: 'Administrador', status: 'Ativo',
 }, master.token);
 await call('POST', '/api/platform-users', {
   companyId: companyB.id, name: 'QA Empresa B', email: userBEmail, password, role: 'Administrador', status: 'Ativo',
 }, master.token);
 
 const loginA = await call('POST', '/api/auth/login', { mode: 'empresa', email: userAEmail, password });
+const loginA2 = await call('POST', '/api/auth/login', { mode: 'empresa', email: userA2Email, password });
 const loginB = await call('POST', '/api/auth/login', { mode: 'empresa', email: userBEmail, password });
 
-if (loginA.companyId !== companyA.id || loginB.companyId !== companyB.id) throw new Error('Company binding failed');
+if (loginA.companyId !== companyA.id || loginA.unitId !== unitA1.id) throw new Error('Primary unit binding failed');
+if (loginA2.companyId !== companyA.id || loginA2.unitId !== unitA2.id) throw new Error('Second unit binding failed');
+if (loginB.companyId !== companyB.id) throw new Error('Company B binding failed');
 if (!companyA.legalName || !companyA.tradeName || !companyA.address || !companyA.document) throw new Error('Full company profile was not persisted');
 
 const uniqueProduct = 'Produto Privado A ' + suffix;
@@ -71,10 +91,28 @@ await call('POST', '/api/products', {
 }, loginA.token);
 
 const stateA = await call('GET', '/api/state', undefined, loginA.token);
+const stateA2Before = await call('GET', '/api/state', undefined, loginA2.token);
 const stateB = await call('GET', '/api/state', undefined, loginB.token);
 
-if (!stateA.products.some(product => product.name === uniqueProduct)) throw new Error('Company A cannot read its own data');
+if (!stateA.products.some(product => product.name === uniqueProduct)) throw new Error('Company A primary unit cannot read its own data');
+if (stateA2Before.products.some(product => product.name === uniqueProduct)) throw new Error('UNIT LEAK: second branch can read primary branch product');
 if (stateB.products.some(product => product.name === uniqueProduct)) throw new Error('TENANT LEAK: Company B can read Company A product');
+
+const unit2Product = 'Produto Filial 2 ' + suffix;
+await call('POST', '/api/products', {
+  name: unit2Product,
+  category: 'Outros',
+  price: 24.9,
+  stock: 6,
+  cost: 9,
+  prepTime: 12,
+  active: true,
+}, loginA2.token);
+
+const stateA2 = await call('GET', '/api/state', undefined, loginA2.token);
+const stateAAfterUnit2 = await call('GET', '/api/state', undefined, loginA.token);
+if (!stateA2.products.some(product => product.name === unit2Product)) throw new Error('Second branch cannot read its own product');
+if (stateAAfterUnit2.products.some(product => product.name === unit2Product)) throw new Error('UNIT LEAK: primary branch can read second branch product');
 
 const companiesA = await call('GET', '/api/companies', undefined, loginA.token);
 const companiesB = await call('GET', '/api/companies', undefined, loginB.token);
@@ -101,16 +139,18 @@ const customerOrder = await call(
   '/api/customer/table/' + encodeURIComponent(accessA.token) + '/orders',
   { customer: 'Cliente QA', items: [{ productId: activeProductA.id, qty: 1 }] }
 );
-if (customerOrder.companyId !== companyA.id || customerOrder.tableId !== publicTableA.table.id) {
-  throw new Error('Customer order was not bound to the correct company/table');
+if (customerOrder.companyId !== companyA.id || customerOrder.unitId !== unitA1.id || customerOrder.tableId !== publicTableA.table.id) {
+  throw new Error('Customer order was not bound to the correct company/unit/table');
 }
 
 const versionAfter = await call('GET', '/api/state/version', undefined, loginA.token);
 if (versionBefore.version === versionAfter.version) throw new Error('State version did not change after customer order');
 
 const stateAAfter = await call('GET', '/api/state', undefined, loginA.token);
+const stateA2After = await call('GET', '/api/state', undefined, loginA2.token);
 const stateBAfter = await call('GET', '/api/state', undefined, loginB.token);
-if (!stateAAfter.orders.some(order => order.id === customerOrder.id)) throw new Error('Company A did not receive its customer order');
+if (!stateAAfter.orders.some(order => order.id === customerOrder.id)) throw new Error('Primary unit did not receive its customer order');
+if (stateA2After.orders.some(order => order.id === customerOrder.id)) throw new Error('UNIT LEAK: second branch received primary branch customer order');
 if (stateBAfter.orders.some(order => order.id === customerOrder.id)) throw new Error('TENANT LEAK: Company B received Company A customer order');
 
 const tampered = accessA.token.slice(0, -1) + (accessA.token.endsWith('a') ? 'b' : 'a');
@@ -121,4 +161,4 @@ const legacyCompanyCode = companyA.id + '~Mesa 01';
 const legacyCompanyResponse = await rawCall('GET', '/api/customer/table/' + encodeURIComponent(legacyCompanyCode));
 if (legacyCompanyResponse.status !== 401) throw new Error('Unsigned company customer code was accepted');
 
-console.log('Tenant isolation + signed QR + order routing test passed:', companyA.id, companyB.id);
+console.log('Company + unit isolation + signed QR + order routing test passed:', companyA.id, unitA1.id, unitA2.id, companyB.id);
