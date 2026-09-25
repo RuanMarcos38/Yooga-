@@ -2704,6 +2704,7 @@ function SettingsView(props: ViewProps) {
   const [editingCompany, setEditingCompany] = useState<CompanyInfo | null>(null);
   const [companyForm, setCompanyForm] = useState({ name: '', document: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' as CompanyInfo['status'] });
   const [settingsQrTable, setSettingsQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
+  const [settingsQrLink, setSettingsQrLink] = useState('');
   const [platformUsers, setPlatformUsers] = useState<PlatformUserInfo[]>([]);
   const [userOpen, setUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<PlatformUserInfo | null>(null);
@@ -2828,6 +2829,16 @@ function SettingsView(props: ViewProps) {
       void loadPlatformUsers().catch(() => setIntegrationMessage('Não foi possível carregar os usuários.'));
     }
   }, [section]);
+
+  useEffect(() => {
+    if (section !== 'qr' || !settingsQrTable) return;
+    let active = true;
+    setSettingsQrLink('');
+    void signedCustomerLink(settingsQrTable)
+      .then(link => { if (active) setSettingsQrLink(link); })
+      .catch(() => { if (active) setSettingsQrLink(''); });
+    return () => { active = false; };
+  }, [section, settingsQrTable]);
 
   const openIntegration = (id: string) => {
     if (id === 'open-api') {
@@ -3075,21 +3086,20 @@ function SettingsView(props: ViewProps) {
   }
 
   if (section === 'qr') {
-    const qrLink = window.location.origin + '/?cliente=' + encodeURIComponent(tenantCustomerCode(settingsQrTable, props.session.companyId));
     return (
       <section>
         <SettingsBack title="Cardápio QR Code" onBack={showHub} subtitle="Gere, teste e copie o acesso de cada mesa" />
         <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
           <Surface>
-            <div className="grid place-items-center rounded-xl bg-white p-3"><QRCodeSVG value={qrLink} size={240} level="M" includeMargin title={'QR ' + settingsQrTable} /></div>
+            <div className="grid min-h-[270px] place-items-center rounded-xl bg-white p-3">{settingsQrLink ? <QRCodeSVG value={settingsQrLink} size={240} level="M" includeMargin title={'QR ' + settingsQrTable} /> : <span className="text-[10px] text-slate-400">Gerando QR seguro...</span>}</div>
           </Surface>
           <Surface>
             <SectionHead title="QR por mesa" subtitle="O código aponta para o portal real do cliente." />
             <Field label="Mesa"><select value={settingsQrTable} onChange={e => setSettingsQrTable(e.target.value)} className="control">{props.data.tables.map(table => <option key={table.id} value={table.name}>{table.name}</option>)}</select></Field>
-            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d] break-all">{qrLink}</div>
+            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d] break-all">{settingsQrLink || 'Gerando link seguro...'}</div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => void navigator.clipboard.writeText(qrLink)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link</button>
-              <button onClick={() => window.open(qrLink, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Testar acesso</button>
+              <button disabled={!settingsQrLink} onClick={() => void navigator.clipboard.writeText(settingsQrLink)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold disabled:opacity-40">Copiar link</button>
+              <button disabled={!settingsQrLink} onClick={() => window.open(settingsQrLink, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white disabled:opacity-40">Testar acesso</button>
             </div>
           </Surface>
         </div>
@@ -3099,7 +3109,6 @@ function SettingsView(props: ViewProps) {
 
   if (section === 'access') {
     const sampleTable = props.data.tables[0]?.name || 'Mesa 01';
-    const customerUrl = window.location.origin + '/?cliente=' + encodeURIComponent(tenantCustomerCode(sampleTable, props.session.companyId));
     return (
       <section>
         <SettingsBack title="Acessos e Usuários" onBack={showHub} subtitle="Crie acessos por empresa e identifique cada ação nos logs" />
@@ -3149,7 +3158,7 @@ function SettingsView(props: ViewProps) {
                 <Field label="Senha da mesa"><input readOnly value={tableLoginPassword(sampleTable)} className="control" /></Field>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button onClick={() => void navigator.clipboard.writeText(customerUrl)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link cliente</button>
+                <button onClick={() => void signedCustomerLink(sampleTable).then(link => navigator.clipboard.writeText(link)).catch(err => alert(err instanceof Error ? err.message : 'Falha ao gerar link.'))} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link cliente</button>
                 <button onClick={() => setSection('integrations')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Configurar n8n</button>
               </div>
             </Surface>
