@@ -180,5 +180,66 @@
       "Enviar foto"
     ],
     "expected": "A foto é otimizada, enviada ao backend e passa a aparecer no produto sem alterar os demais dados."
+  },
+  {
+    "name": "Acesso por empresa e usuários identificados",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "POST /api/platform-users",
+      "PUT /api/platform-users/:id",
+      "DELETE /api/platform-users/:id",
+      "POST /api/auth/login",
+      "Ajustes > Acessos e Usuários"
+    ],
+    "description": "Valida criação de usuários vinculados a empresas contratantes e login individual.",
+    "steps": [
+      "Cadastrar uma empresa ativa",
+      "Abrir Acessos e Usuários",
+      "Criar usuário com e-mail, senha e perfil",
+      "Sair",
+      "Entrar com o novo usuário"
+    ],
+    "expected": "O usuário entra com sua própria identidade, empresa e perfil sem alterar o acesso Super Admin."
+  },
+  {
+    "name": "Auditoria identifica o usuário autenticado",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "Authorization Bearer",
+      "currentRequestHeaders",
+      "auditLog",
+      "Histórico operacional"
+    ],
+    "description": "Valida que ações auditadas registram quem realizou a operação.",
+    "steps": [
+      "Entrar com usuário empresarial",
+      "Alterar uma mesa ou pedido",
+      "Abrir Histórico / Caixa",
+      "Localizar a ação no Histórico operacional"
+    ],
+    "expected": "O log mostra ação, detalhe, data/hora e nome do usuário autenticado."
+  },
+  {
+    "name": "Varredura de botões operacionais sem ação vazia",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "Notificações",
+      "Adicionar Pagamento",
+      "Smart Ops",
+      "QuickIcon",
+      "Filtro de relatórios"
+    ],
+    "description": "Valida botões anteriormente apenas visuais e seus destinos operacionais.",
+    "steps": [
+      "Testar sino de notificações",
+      "Testar Adicionar Pagamento",
+      "Executar Smart Ops",
+      "Testar atalhos da mesa",
+      "Usar Filtrar em Histórico"
+    ],
+    "expected": "Todos os botões verificados executam uma ação correspondente e não ficam inertes."
   }
 ]
