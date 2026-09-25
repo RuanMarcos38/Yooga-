@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -27,6 +28,7 @@ type RouteTable = Record<string, [RouteHandler]>;
 const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'backend', 'data');
 const uploadsDir = path.join(dataDir, 'uploads');
 const collectionLocks = new Map<string, Promise<unknown>>();
+const requestContext = new AsyncLocalStorage<{ headers: Record<string, string | undefined> }>();
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8' };
 
@@ -201,6 +203,10 @@ function matchRoute(routePath: string, requestPath: string) {
   return params;
 }
 
+export function currentRequestHeaders() {
+  return requestContext.getStore()?.headers || {};
+}
+
 export function router(routes: RouteTable) {
   const entries = Object.entries(routes).map(([key, handlers]) => {
     const [method, ...pathParts] = key.split(' ');
@@ -213,7 +219,7 @@ export function router(routes: RouteTable) {
         if (entry.method !== request.method.toUpperCase()) continue;
         const params = matchRoute(entry.path, request.path);
         if (!params) continue;
-        return entry.handler({
+        return requestContext.run({ headers: request.headers }, () => entry.handler({
           params,
           body: request.body,
           event: {
@@ -221,7 +227,7 @@ export function router(routes: RouteTable) {
             method: request.method,
             path: request.path,
           },
-        });
+        }));
       }
       return error('Rota não encontrada', 404);
     },
