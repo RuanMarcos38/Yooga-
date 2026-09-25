@@ -532,6 +532,7 @@ function sessionFromAuthorization() {
   if (signature !== expected) return null;
   try {
     const payload = JSON.parse(Buffer.from(base, 'base64url').toString('utf8')) as {
+      mode?: 'empresa' | 'cliente';
       name?: string;
       email?: string;
       role?: string;
