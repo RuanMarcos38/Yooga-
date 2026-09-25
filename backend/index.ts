@@ -69,6 +69,10 @@ type O = {
   id: string;
   code: string;
   channel: string;
+  companyId?: string;
+  unitId?: string;
+  tableId?: string;
+  createdBy?: string;
   table?: string;
   customer?: string;
   items: I[];
@@ -425,7 +429,42 @@ function tenantCollection(base: string, tenantId = currentTenantId()) {
   return base + '__' + tenantId.replace(/[^a-z0-9_-]/gi, '_');
 }
 
+type CustomerAccessPayload = {
+  v: 1;
+  companyId: string;
+  tableId: string;
+  tableName: string;
+};
+
+function customerAccessSecret() {
+  return process.env.CUSTOMER_QR_SECRET || process.env.AUTH_SECRET || 'tapfood-auth-secret';
+}
+
+function signCustomerAccess(payload: CustomerAccessPayload) {
+  const base = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = createHash('sha256').update('customer:' + base + ':' + customerAccessSecret()).digest('base64url');
+  return 'q.' + base + '.' + signature;
+}
+
+function verifyCustomerAccess(code: string): CustomerAccessPayload | null {
+  const decoded = decodeURIComponent(code);
+  if (!decoded.startsWith('q.')) return null;
+  const [, base, signature] = decoded.split('.');
+  if (!base || !signature) return null;
+  const expected = createHash('sha256').update('customer:' + base + ':' + customerAccessSecret()).digest('base64url');
+  if (signature !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(base, 'base64url').toString('utf8')) as CustomerAccessPayload;
+    if (payload.v !== 1 || !payload.companyId || !payload.tableId || !payload.tableName) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 function customerTenantFromCode(code: string) {
+  const signed = verifyCustomerAccess(code);
+  if (signed) return signed.companyId.replace(/[^a-z0-9_-]/gi, '_');
   const decoded = decodeURIComponent(code);
   const separator = decoded.indexOf('~');
   if (separator <= 0) return '__master__';
@@ -433,9 +472,15 @@ function customerTenantFromCode(code: string) {
 }
 
 function customerTableCode(code: string) {
+  const signed = verifyCustomerAccess(code);
+  if (signed) return signed.tableName;
   const decoded = decodeURIComponent(code);
   const separator = decoded.indexOf('~');
   return separator > 0 ? decoded.slice(separator + 1) : decoded;
+}
+
+function customerTableId(code: string) {
+  return verifyCustomerAccess(code)?.tableId;
 }
 
 async function get(tenantId = currentTenantId()) {
@@ -533,6 +578,8 @@ function audit(state: S, entity: string, entityId: string, action: string, detai
 }
 
 function tableFromCode(state: S, code: string) {
+  const signedTableId = customerTableId(code);
+  if (signedTableId) return state.tables.find(table => table.id === signedTableId);
   const normalized = customerTableCode(code).replace(/-/g, ' ').trim().toLowerCase();
   return state.tables.find(table => table.name.toLowerCase() === normalized);
 }
@@ -832,6 +879,20 @@ function validateImagePayload(value: { content?: string; contentType?: string })
   return { extension: extensions[value.contentType] };
 }
 
+function stateVersion(state: S) {
+  return createHash('sha256').update(JSON.stringify({
+    products: state.products.map(item => [item.id, item.stock, item.active, item.price, item.imagePath, item.imageUrl]),
+    tables: state.tables.map(item => [item.id, item.status, item.total, item.waiter]),
+    orders: state.orders.map(item => [item.id, item.status, item.updatedAt, item.total]),
+    customers: state.customers.map(item => [item.id, item.orders, item.totalSpent, item.lastOrder]),
+    stock: state.stock.map(item => [item.id, item.current]),
+    transactions: state.transactions.map(item => [item.id, item.amount, item.createdAt]),
+    cash: state.cashRegister,
+    requests: state.serviceRequests.map(item => [item.id, item.status, item.resolvedAt]),
+    settings: state.settings,
+  })).digest('base64url').slice(0, 24);
+}
+
 function transactionTimestamp(state: S, tx: Tx) {
   if (tx.createdAt) {
     const parsed = Date.parse(tx.createdAt);
@@ -853,12 +914,42 @@ export const handler = router({
     modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'users', 'audit', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
   })],
 
+  'GET /api/state/version': [async () => {
+    const current = await get();
+    return json({
+      version: stateVersion(current.state),
+      orders: current.state.orders.length,
+      pendingRequests: current.state.serviceRequests.filter(item => item.status === 'pending').length,
+      updatedAt: new Date().toISOString(),
+    });
+  }],
+
+  'POST /api/customer/access': [async ({ body }) => {
+    const session = sessionFromAuthorization();
+    if (!session || session.mode !== 'empresa' || !session.companyId) return error('Acesso empresarial obrigatório', 401);
+    const value = body as { tableId?: string; tableName?: string };
+    const current = await get(session.companyId);
+    const table = current.state.tables.find(item =>
+      (value.tableId && item.id === value.tableId) ||
+      (value.tableName && item.name.toLowerCase() === String(value.tableName).trim().toLowerCase())
+    );
+    if (!table) return error('Mesa não encontrada', 404);
+    const token = signCustomerAccess({
+      v: 1,
+      companyId: session.companyId,
+      tableId: table.id,
+      tableName: table.name,
+    });
+    return json({ token, tableId: table.id, tableName: table.name, companyId: session.companyId });
+  }],
+
   'POST /api/auth/login': [async ({ body }) => {
     const value = body as { mode?: 'empresa' | 'cliente'; email?: string; password?: string; table?: string };
     const password = String(value.password || '').trim();
 
     if (value.mode === 'cliente') {
       const tableCode = value.table || 'Mesa 01';
+      if (decodeURIComponent(tableCode).startsWith('q.') && !verifyCustomerAccess(tableCode)) return error('QR Code inválido', 401);
       const tenantId = customerTenantFromCode(tableCode);
       const current = await get(tenantId);
       const table = tableFromCode(current.state, tableCode);
@@ -1237,6 +1328,10 @@ export const handler = router({
       id: 'api-o' + Date.now(),
       code: '#API' + String(Date.now()).slice(-6),
       channel,
+      companyId: apiKey.companyId || '__master__',
+      unitId: current.state.settings.unit,
+      tableId: value.table ? current.state.tables.find(item => item.name === value.table)?.id : undefined,
+      createdBy: 'API ' + apiKey.prefix,
       table: value.table,
       customer: value.customer?.trim().slice(0, 120) || 'Integração API',
       items: validated.items,
@@ -1577,6 +1672,7 @@ export const handler = router({
   'GET /api/state': [async () => json(await withSignedImages((await get()).state))],
 
   'GET /api/customer/table/:code': [async ({ params }) => {
+    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
     const tenantId = customerTenantFromCode(params.code);
     const current = await get(tenantId);
     const table = tableFromCode(current.state, params.code);
@@ -1627,6 +1723,7 @@ export const handler = router({
   }],
 
   'POST /api/customer/table/:code/orders': [async ({ params, body }) => {
+    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
     const value = body as { customer?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const tenantId = customerTenantFromCode(params.code);
@@ -1651,6 +1748,10 @@ export const handler = router({
       id: 'co' + Date.now(),
       code: '#' + sequence,
       channel: 'Mesa',
+      companyId: tenantId,
+      unitId: current.state.settings.unit,
+      tableId: table.id,
+      createdBy: 'Cliente',
       table: table.name,
       customer: value.customer?.trim().slice(0, 120) || 'Cliente da mesa',
       items: validated.items,
@@ -1668,6 +1769,7 @@ export const handler = router({
   }],
 
   'POST /api/customer/table/:code/register': [async ({ params, body }) => {
+    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
     const value = body as Partial<C>;
     if (!value.name?.trim() || !value.phone?.trim()) return error('Nome e telefone obrigatórios', 400);
     const normalizedPhone = value.phone.replace(/\D/g, '');
@@ -1708,6 +1810,7 @@ export const handler = router({
   }],
 
   'POST /api/customer/table/:code/request': [async ({ params, body }) => {
+    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
     const value = body as { type?: 'waiter' | 'bill' };
     if (!value.type || !['waiter', 'bill'].includes(value.type)) return error('Solicitação inválida', 400);
     const tenantId = customerTenantFromCode(params.code);
@@ -1960,10 +2063,16 @@ export const handler = router({
     const total = Number((subtotal + fee).toFixed(2));
     const sequence = 1051 + current.state.orders.filter(order => /^#\d+$/.test(order.code) && Number(order.code.slice(1)) >= 1051).length;
     const createdAt = new Date().toISOString();
+    const session = sessionFromAuthorization();
+    const orderTable = channel === 'Mesa' ? current.state.tables.find(item => item.name === value.table) : undefined;
     const order: O = {
       id: 'o' + Date.now(),
       code: '#' + sequence,
       channel,
+      companyId: session?.companyId || currentTenantId(),
+      unitId: current.state.settings.unit,
+      tableId: orderTable?.id,
+      createdBy: session?.userId || session?.name || 'Sistema',
       table: channel === 'Mesa' ? value.table : undefined,
       customer: value.customer?.trim().slice(0, 120) || 'Cliente balcão',
       items: validated.items,
