@@ -32,6 +32,14 @@ type MenuCategory = {
 type AppSettings = {
   restaurantName: string;
   unit: string;
+  brandName: string;
+  brandTagline: string;
+  brandPrimaryColor: string;
+  brandLogoUrl?: string;
+  brandLogoPath?: string;
+  brandSupportEmail?: string;
+  brandSupportPhone?: string;
+  hideTapfoodBranding: boolean;
   serviceFee: number;
   automaticServiceFee: boolean;
   qrMenuEnabled: boolean;
@@ -179,6 +187,14 @@ const tableStatusValues: T['status'][] = ['Livre', 'Ocupada', 'Aguardando', 'Fec
 const defaultSettings = (): AppSettings => ({
   restaurantName: 'TAPFOOD',
   unit: 'Unidade Principal',
+  brandName: 'TAPFOOD',
+  brandTagline: 'Gestão de Restaurantes',
+  brandPrimaryColor: '#f45f3f',
+  brandLogoUrl: '',
+  brandLogoPath: '',
+  brandSupportEmail: '',
+  brandSupportPhone: '',
+  hideTapfoodBranding: false,
   serviceFee: 10,
   automaticServiceFee: true,
   qrMenuEnabled: true,
@@ -565,7 +581,8 @@ async function save(id: string, state: S, tenantId = currentTenantId(), unitId =
 async function withSignedImages(state: S): Promise<S> {
   const productPaths = state.products.map(item => item.imagePath).filter((value): value is string => Boolean(value));
   const categoryPaths = state.menuCategories.map(item => item.imagePath).filter((value): value is string => Boolean(value));
-  const paths = [...new Set([...productPaths, ...categoryPaths])];
+  const brandingPaths = state.settings.brandLogoPath ? [state.settings.brandLogoPath] : [];
+  const paths = [...new Set([...productPaths, ...categoryPaths, ...brandingPaths])];
   if (!paths.length) return state;
 
   const urls = await storage.url(paths);
@@ -574,6 +591,7 @@ async function withSignedImages(state: S): Promise<S> {
     ...state,
     products: state.products.map(item => item.imagePath ? { ...item, imageUrl: urlMap.get(item.imagePath) || item.imageUrl } : item),
     menuCategories: state.menuCategories.map(item => item.imagePath ? { ...item, imageUrl: urlMap.get(item.imagePath) || item.imageUrl } : item),
+    settings: state.settings.brandLogoPath ? { ...state.settings, brandLogoUrl: urlMap.get(state.settings.brandLogoPath) || state.settings.brandLogoUrl } : state.settings,
   };
 }
 
@@ -1941,6 +1959,13 @@ export const handler = router({
         pixEnabled: current.state.settings.pixEnabled,
         cardEnabled: current.state.settings.cardEnabled,
         cashEnabled: current.state.settings.cashEnabled,
+        brandName: current.state.settings.brandName,
+        brandTagline: current.state.settings.brandTagline,
+        brandPrimaryColor: current.state.settings.brandPrimaryColor,
+        brandLogoUrl: publicState.settings.brandLogoUrl || '',
+        brandSupportEmail: current.state.settings.brandSupportEmail || '',
+        brandSupportPhone: current.state.settings.brandSupportPhone || '',
+        hideTapfoodBranding: current.state.settings.hideTapfoodBranding,
       },
       table,
       orders,
@@ -2452,10 +2477,38 @@ export const handler = router({
     return json(transaction, 201);
   }],
 
+  'POST /api/settings/branding/logo': [async ({ body }) => {
+    const value = body as { content?: string; contentType?: string };
+    const validatedImage = validateImagePayload(value);
+    if ('error' in validatedImage) return error(String(validatedImage.error), 400);
+    const current = await get();
+    const path = 'tenants/' + currentTenantId() + '/' + (currentUnitId() || 'primary') + '/branding/logo-' + Date.now() + '.' + validatedImage.extension;
+    const [ok] = await storage.write([{ path, content: value.content!, contentType: value.contentType! }]);
+    if (!ok) return error('Falha ao salvar logo', 500);
+    if (current.state.settings.brandLogoPath) await storage.delete([current.state.settings.brandLogoPath]);
+    current.state.settings.brandLogoPath = path;
+    current.state.settings.brandLogoUrl = '';
+    await save(current.id, current.state);
+    const [{ url }] = await storage.url([path]);
+    return json({ brandLogoPath: path, brandLogoUrl: url });
+  }],
+
+  'DELETE /api/settings/branding/logo': [async () => {
+    const current = await get();
+    if (current.state.settings.brandLogoPath) await storage.delete([current.state.settings.brandLogoPath]);
+    current.state.settings.brandLogoPath = '';
+    current.state.settings.brandLogoUrl = '';
+    await save(current.id, current.state);
+    return json({ deleted: true });
+  }],
+
   'PUT /api/settings': [async ({ body }) => {
     const value = body as Partial<AppSettings>;
     if (value.restaurantName !== undefined && !value.restaurantName.trim()) return error('Nome é obrigatório', 400);
     if (value.unit !== undefined && !value.unit.trim()) return error('Unidade é obrigatória', 400);
+    if (value.brandName !== undefined && !String(value.brandName).trim()) return error('Nome da marca é obrigatório', 400);
+    if (value.brandTagline !== undefined && String(value.brandTagline).length > 120) return error('Subtítulo da marca é muito longo', 400);
+    if (value.brandPrimaryColor !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(String(value.brandPrimaryColor))) return error('Cor principal inválida', 400);
     if (value.serviceFee !== undefined && (!Number.isFinite(Number(value.serviceFee)) || Number(value.serviceFee) < 0 || Number(value.serviceFee) > 30)) return error('Taxa de serviço inválida', 400);
     if (value.deliveryMinimum !== undefined && (!Number.isFinite(Number(value.deliveryMinimum)) || Number(value.deliveryMinimum) < 0)) return error('Pedido mínimo inválido', 400);
     if (value.freeDeliveryFrom !== undefined && (!Number.isFinite(Number(value.freeDeliveryFrom)) || Number(value.freeDeliveryFrom) < 0)) return error('Frete grátis inválido', 400);
@@ -2467,6 +2520,12 @@ export const handler = router({
       ...value,
       restaurantName: value.restaurantName?.trim().slice(0, 120) || current.state.settings.restaurantName,
       unit: value.unit?.trim().slice(0, 120) || current.state.settings.unit,
+      brandName: value.brandName?.trim().slice(0, 80) || current.state.settings.brandName,
+      brandTagline: value.brandTagline === undefined ? current.state.settings.brandTagline : String(value.brandTagline).trim().slice(0, 120),
+      brandPrimaryColor: value.brandPrimaryColor || current.state.settings.brandPrimaryColor,
+      brandSupportEmail: value.brandSupportEmail === undefined ? current.state.settings.brandSupportEmail : String(value.brandSupportEmail).trim().toLowerCase().slice(0, 160),
+      brandSupportPhone: value.brandSupportPhone === undefined ? current.state.settings.brandSupportPhone : String(value.brandSupportPhone).replace(/\D/g, '').slice(0, 13),
+      hideTapfoodBranding: value.hideTapfoodBranding === undefined ? current.state.settings.hideTapfoodBranding : Boolean(value.hideTapfoodBranding),
       serviceFee: value.serviceFee === undefined ? current.state.settings.serviceFee : Number(value.serviceFee),
       deliveryMinimum: value.deliveryMinimum === undefined ? current.state.settings.deliveryMinimum : Number(value.deliveryMinimum),
       freeDeliveryFrom: value.freeDeliveryFrom === undefined ? current.state.settings.freeDeliveryFrom : Number(value.freeDeliveryFrom),
