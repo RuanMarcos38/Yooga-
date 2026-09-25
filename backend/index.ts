@@ -541,6 +541,10 @@ async function get(tenantId = currentTenantId(), unitId = currentUnitId()) {
     const { id, ...record } = result.items[0];
     const raw = record as Partial<S>;
     const state = normalizeState(raw);
+    if (tenantId !== '__master__' && unitId) {
+      const unit = await getUnit(tenantId, unitId);
+      if (unit) state.settings = { ...state.settings, unit: unit.name };
+    }
     if (shouldPersistRepairedTables(raw.tables, state.tables)) {
       const [ok] = await db.update(collection, [{ id, record: state as unknown as Record<string, unknown> }]);
       if (!ok) throw new Error('save');
