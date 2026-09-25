@@ -100,4 +100,8 @@ const tampered = accessA.token.slice(0, -1) + (accessA.token.endsWith('a') ? 'b'
 const tamperedResponse = await rawCall('GET', '/api/customer/table/' + encodeURIComponent(tampered));
 if (tamperedResponse.status !== 401) throw new Error('Tampered QR token was accepted');
 
+const legacyCompanyCode = companyA.id + '~Mesa 01';
+const legacyCompanyResponse = await rawCall('GET', '/api/customer/table/' + encodeURIComponent(legacyCompanyCode));
+if (legacyCompanyResponse.status !== 401) throw new Error('Unsigned company customer code was accepted');
+
 console.log('Tenant isolation + signed QR + order routing test passed:', companyA.id, companyB.id);
