@@ -101,5 +101,65 @@
       "Adicionar um item e tentar salvar o pedido"
     ],
     "expected": "O sistema mostra o erro da operação e continua utilizável sem perder a estrutura da interface."
+  },
+  {
+    "name": "Cadastro de empresas contratantes funciona sem alterar a operação existente",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "GET /api/companies",
+      "POST /api/companies",
+      "PUT /api/companies/:id",
+      "DELETE /api/companies/:id",
+      "Ajustes > Empresas contratantes"
+    ],
+    "description": "Valida criação, edição, status e exclusão das empresas que contratam a plataforma.",
+    "steps": [
+      "Abrir Ajustes > Empresas contratantes",
+      "Cadastrar uma empresa de teste",
+      "Editar plano/status",
+      "Excluir a empresa de teste"
+    ],
+    "expected": "A lista atualiza corretamente em todas as operações sem alterar os demais módulos."
+  },
+  {
+    "name": "QR Code por mesa abre o portal correto do cliente",
+    "sanity": true,
+    "viewport": "mobile",
+    "covers": [
+      "qrcode.react",
+      "Ajustes > Cardápio QR Code",
+      "Montar cardápio > Pré-visualizar QR",
+      "/api/customer/table/:code"
+    ],
+    "description": "Valida que o QR é gerado com o endereço real da mesa e que o botão de pré-visualização deixou de ser inativo.",
+    "steps": [
+      "Abrir Ajustes > Cardápio QR Code",
+      "Selecionar uma mesa",
+      "Escanear ou testar o link gerado",
+      "Repetir em Montar cardápio > Pré-visualizar QR"
+    ],
+    "expected": "O QR abre o portal do cliente exatamente na mesa selecionada e o link pode ser copiado/testado."
+  },
+  {
+    "name": "Cards principais de Ajustes possuem ação funcional",
+    "viewport": "desktop",
+    "covers": [
+      "PromoCard",
+      "AjusteTile",
+      "Configurações",
+      "Integrações",
+      "API Aberta",
+      "Empresas contratantes",
+      "Cardápio QR Code"
+    ],
+    "description": "Varredura dos cards de Ajustes para garantir navegação e ação nos principais módulos.",
+    "steps": [
+      "Abrir Ajustes",
+      "Clicar em cada card principal",
+      "Confirmar que abre a seção ou módulo correspondente",
+      "Voltar ao hub e repetir"
+    ],
+    "expected": "Nenhum card principal fica sem resposta e a estrutura visual permanece inalterada."
   }
 ]
