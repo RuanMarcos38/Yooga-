@@ -1160,6 +1160,7 @@ function MenuBuilderView(props: ViewProps) {
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrTable, setQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
+  const [qrLink, setQrLink] = useState('');
   const categories = [...props.data.menuCategories].sort((a, b) => a.order - b.order);
   const lowStock = props.data.products.filter(product => product.stock <= 5).length;
   const lowMargin = props.data.products.filter(product => product.cost && product.price > 0 && ((product.price - product.cost) / product.price) * 100 < 35).length;
@@ -1181,6 +1182,16 @@ function MenuBuilderView(props: ViewProps) {
       imageUrl: product.imageUrl,
     }), 'Produto duplicado.');
   };
+
+  useEffect(() => {
+    if (!qrOpen || !qrTable) return;
+    let active = true;
+    setQrLink('');
+    void signedCustomerLink(qrTable)
+      .then(link => { if (active) setQrLink(link); })
+      .catch(() => { if (active) setQrLink(''); });
+    return () => { active = false; };
+  }, [qrOpen, qrTable]);
 
   return (
     <PageSection title="Montar cardápio" subtitle="Categorias, produtos, fotos, canais, complementos e ficha técnica">
@@ -1246,30 +1257,27 @@ function MenuBuilderView(props: ViewProps) {
 
       {productOpen && <ProductEditor product={editingProduct} categories={categories} run={props.run} onClose={() => setProductOpen(false)} />}
       {categoryOpen && <CategoryEditor category={editingCategory} run={props.run} onClose={() => setCategoryOpen(false)} />}
-      {qrOpen && (() => {
-        const link = window.location.origin + '/?cliente=' + encodeURIComponent(tenantCustomerCode(qrTable, props.session.companyId));
-        return (
-          <Modal title="QR Code do cardápio" onClose={() => setQrOpen(false)}>
-            <div className="grid gap-4 md:grid-cols-[220px_1fr]">
-              <div className="grid place-items-center rounded-xl border border-[#e5e8ea] bg-white p-4">
-                <QRCodeSVG value={link} size={190} level="M" includeMargin title={'QR ' + qrTable} />
-              </div>
-              <div className="space-y-3">
-                <Field label="Mesa">
-                  <select value={qrTable} onChange={event => setQrTable(event.target.value)} className="control">
-                    {props.data.tables.map(table => <option key={table.id} value={table.name}>{table.name}</option>)}
-                  </select>
-                </Field>
-                <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Este QR abre diretamente o cardápio e atendimento da mesa selecionada.</div>
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={() => void navigator.clipboard.writeText(link)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link</button>
-                  <button onClick={() => window.open(link, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Testar QR / link</button>
-                </div>
+      {qrOpen && (
+        <Modal title="QR Code do cardápio" onClose={() => setQrOpen(false)}>
+          <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+            <div className="grid min-h-[220px] place-items-center rounded-xl border border-[#e5e8ea] bg-white p-4">
+              {qrLink ? <QRCodeSVG value={qrLink} size={190} level="M" includeMargin title={'QR ' + qrTable} /> : <span className="text-[10px] text-slate-400">Gerando QR seguro...</span>}
+            </div>
+            <div className="space-y-3">
+              <Field label="Mesa">
+                <select value={qrTable} onChange={event => setQrTable(event.target.value)} className="control">
+                  {props.data.tables.map(table => <option key={table.id} value={table.name}>{table.name}</option>)}
+                </select>
+              </Field>
+              <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Este QR é assinado pelo servidor e abre somente a empresa e a mesa selecionadas.</div>
+              <div className="flex flex-wrap gap-2">
+                <button disabled={!qrLink} onClick={() => void navigator.clipboard.writeText(qrLink)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold disabled:opacity-40">Copiar link</button>
+                <button disabled={!qrLink} onClick={() => window.open(qrLink, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white disabled:opacity-40">Testar QR / link</button>
               </div>
             </div>
-          </Modal>
-        );
-      })()}
+          </div>
+        </Modal>
+      )}
     </PageSection>
   );
 }
