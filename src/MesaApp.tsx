@@ -135,7 +135,7 @@ type State = {
   settings: AppSettings;
 };
 type Page = 'dashboard' | 'pdv' | 'tables' | 'history' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
-type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; token: string; expiresAt: string };
+type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string; token: string; expiresAt: string };
 
 const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ACCENT = '#f45f3f';
@@ -579,7 +579,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           <button className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
           <button onClick={onLogout} className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('') || 'TF'}</span>
-            <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">Empresa · acesso total · {data.settings.unit}</small></span>
+            <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">{session.companyName || 'TAPFOOD'} · {session.role} · {data.settings.unit}</small></span>
             <LogOut size={14} className="text-slate-400" />
           </button>
         </header>
@@ -2304,7 +2304,7 @@ function HistoryView(props: ViewProps) {
             <div key={event.id} className="flex items-center gap-3 border-t py-3 first:border-t-0">
               <span className="grid h-8 w-8 place-items-center rounded-full bg-[#eef7fb] text-[#1b91c8]"><History size={14} /></span>
               <span className="min-w-0 flex-1"><b className="block text-[10px]">{event.action}</b><small className="block truncate text-[9px] text-slate-400">{event.detail}</small></span>
-              <small className="text-[9px] text-slate-400">{new Date(event.createdAt).toLocaleString('pt-BR')}</small>
+              <span className="text-right"><b className="block text-[9px] text-[#45515a]">{event.user}</b><small className="text-[9px] text-slate-400">{new Date(event.createdAt).toLocaleString('pt-BR')}</small></span>
             </div>
           ))}
           {props.data.auditLog.length === 0 && <p className="text-xs text-slate-400">Nenhuma movimentação registrada ainda.</p>}
@@ -2610,6 +2610,18 @@ type CompanyInfo = {
   updatedAt: string;
 };
 
+type PlatformUserInfo = {
+  id: string;
+  companyId: string;
+  companyName?: string;
+  name: string;
+  email: string;
+  role: 'Administrador' | 'Gestor' | 'Operador';
+  status: 'Ativo' | 'Inativo';
+  createdAt: string;
+  updatedAt: string;
+};
+
 type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'marketing' | 'print' | 'tools' | 'open-api' | 'companies' | 'qr';
 
 const integrationCatalog = [
@@ -2651,6 +2663,17 @@ function SettingsView(props: ViewProps) {
   const [editingCompany, setEditingCompany] = useState<CompanyInfo | null>(null);
   const [companyForm, setCompanyForm] = useState({ name: '', document: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' as CompanyInfo['status'] });
   const [settingsQrTable, setSettingsQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
+  const [platformUsers, setPlatformUsers] = useState<PlatformUserInfo[]>([]);
+  const [userOpen, setUserOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<PlatformUserInfo | null>(null);
+  const [userForm, setUserForm] = useState({
+    companyId: '',
+    name: '',
+    email: '',
+    password: '',
+    role: 'Operador' as PlatformUserInfo['role'],
+    status: 'Ativo' as PlatformUserInfo['status'],
+  });
 
   const saveGeneral = async () => {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
@@ -2676,6 +2699,50 @@ function SettingsView(props: ViewProps) {
   const loadCompanies = async () => {
     const response = await api.get('/api/companies');
     setCompanies(response.data as CompanyInfo[]);
+  };
+
+  const loadPlatformUsers = async () => {
+    const response = await api.get('/api/platform-users');
+    setPlatformUsers(response.data as PlatformUserInfo[]);
+  };
+
+  const openUser = (user?: PlatformUserInfo, companyId?: string) => {
+    setEditingUser(user || null);
+    setUserForm(user ? {
+      companyId: user.companyId,
+      name: user.name,
+      email: user.email,
+      password: '',
+      role: user.role,
+      status: user.status,
+    } : {
+      companyId: companyId || companies[0]?.id || '',
+      name: '',
+      email: '',
+      password: '',
+      role: 'Operador',
+      status: 'Ativo',
+    });
+    setUserOpen(true);
+  };
+
+  const savePlatformUser = async () => {
+    if (!userForm.companyId || !userForm.name.trim() || !userForm.email.trim()) return;
+    if (!editingUser && userForm.password.length < 6) {
+      alert('Informe uma senha com pelo menos 6 caracteres.');
+      return;
+    }
+    const payload = { ...userForm, password: userForm.password || undefined };
+    if (editingUser) await api.put('/api/platform-users/' + editingUser.id, payload);
+    else await api.post('/api/platform-users', payload);
+    setUserOpen(false);
+    await loadPlatformUsers();
+  };
+
+  const deletePlatformUser = async (user: PlatformUserInfo) => {
+    if (!confirm('Excluir o acesso de ' + user.name + '?')) return;
+    await api.delete('/api/platform-users/' + user.id);
+    await loadPlatformUsers();
   };
 
   const openCompany = (company?: CompanyInfo) => {
@@ -2713,8 +2780,11 @@ function SettingsView(props: ViewProps) {
     if (section === 'open-api') {
       void loadApiKeys().catch(() => setIntegrationMessage('Não foi possível carregar as chaves da API.'));
     }
-    if (section === 'companies') {
+    if (section === 'companies' || section === 'access') {
       void loadCompanies().catch(() => setIntegrationMessage('Não foi possível carregar as empresas.'));
+    }
+    if (section === 'access') {
+      void loadPlatformUsers().catch(() => setIntegrationMessage('Não foi possível carregar os usuários.'));
     }
   }, [section]);
 
@@ -2934,7 +3004,7 @@ function SettingsView(props: ViewProps) {
                     <td><b className="block">{company.contactName || 'Responsável não informado'}</b><span className="text-slate-400">{company.email || company.phone || 'Sem contato'}</span></td>
                     <td>{company.plan || 'Padrão'}</td>
                     <td><Badge value={company.status} /></td>
-                    <td><div className="flex justify-end gap-2"><button onClick={() => openCompany(company)} className="rounded-lg border px-3 py-2 font-semibold">Editar</button><button onClick={() => void deleteCompany(company)} className="rounded-lg border border-red-100 px-3 py-2 font-semibold text-red-500">Excluir</button></div></td>
+                    <td><div className="flex justify-end gap-2"><button onClick={() => { setSection('access'); setTimeout(() => openUser(undefined, company.id), 0); }} className="rounded-lg border border-[#cce7f4] px-3 py-2 font-semibold text-[#159fe5]">Criar acesso</button><button onClick={() => openCompany(company)} className="rounded-lg border px-3 py-2 font-semibold">Editar</button><button onClick={() => void deleteCompany(company)} className="rounded-lg border border-red-100 px-3 py-2 font-semibold text-red-500">Excluir</button></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -2988,28 +3058,74 @@ function SettingsView(props: ViewProps) {
     const customerUrl = window.location.origin + '/?cliente=' + encodeURIComponent(sampleTable);
     return (
       <section>
-        <SettingsBack title="Acessos" onBack={showHub} subtitle="Entrada da empresa e acesso do cliente por mesa" />
-        <div className="grid gap-4 xl:grid-cols-2">
-          <Surface>
-            <SectionHead title="Empresa" subtitle="Perfil administrativo do estabelecimento" />
-            <div className="grid gap-3">
-              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · acesso total</small></span><Badge value="Ativo" /></DataRow>
-              <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Use o botão Sair para voltar à tela de entrada e testar os perfis Empresa e Cliente.</div>
-              <button onClick={props.onLogout} className="w-fit rounded-xl bg-[#202538] px-4 py-3 text-[10px] font-bold text-white">Sair da empresa</button>
-            </div>
-          </Surface>
-          <Surface>
-            <SectionHead title="Clientes por mesa" subtitle="Acesso limitado ao pedido e atendimento" />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Mesa de exemplo"><input readOnly value={sampleTable} className="control" /></Field>
-              <Field label="Senha da mesa"><input readOnly value={tableLoginPassword(sampleTable)} className="control" /></Field>
-            </div>
-            <div className="mt-3 flex gap-2">
-              <button onClick={() => void navigator.clipboard.writeText(customerUrl)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link cliente</button>
-              <button onClick={() => setSection('integrations')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Configurar n8n</button>
-            </div>
-          </Surface>
+        <SettingsBack title="Acessos e Usuários" onBack={showHub} subtitle="Crie acessos por empresa e identifique cada ação nos logs" />
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="grid grid-cols-3 gap-2">
+            <MiniStat label="Usuários" value={String(platformUsers.length)} />
+            <MiniStat label="Ativos" value={String(platformUsers.filter(item => item.status === 'Ativo').length)} />
+            <MiniStat label="Empresas" value={String(companies.length)} />
+          </div>
+          <button onClick={() => openUser()} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Criar usuário</button>
         </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.35fr_.65fr]">
+          <Surface>
+            <SectionHead title="Usuários da plataforma" subtitle="Cada usuário entra com seu próprio e-mail e senha." />
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left">
+                <thead><tr className="border-b text-[9px] uppercase text-slate-400"><th className="py-3">Usuário</th><th>Empresa</th><th>Perfil</th><th>Status</th><th className="text-right">Ações</th></tr></thead>
+                <tbody>
+                  {platformUsers.map(user => (
+                    <tr key={user.id} className="border-b border-[#f0eeea] text-[10px]">
+                      <td className="py-3"><b className="block text-xs">{user.name}</b><span className="text-slate-400">{user.email}</span></td>
+                      <td>{user.companyName || companies.find(company => company.id === user.companyId)?.name || '—'}</td>
+                      <td>{user.role}</td>
+                      <td><Badge value={user.status} /></td>
+                      <td><div className="flex justify-end gap-2"><button onClick={() => openUser(user)} className="rounded-lg border px-3 py-2 font-semibold">Editar</button><button onClick={() => void deletePlatformUser(user)} className="rounded-lg border border-red-100 px-3 py-2 font-semibold text-red-500">Excluir</button></div></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {platformUsers.length === 0 && <div className="py-8 text-center text-xs text-slate-400">Nenhum usuário empresarial cadastrado.</div>}
+            </div>
+          </Surface>
+
+          <div className="space-y-4">
+            <Surface>
+              <SectionHead title="Sessão atual" subtitle="Identidade usada nos registros de auditoria" />
+              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · {props.session.role}</small></span><Badge value="Ativo" /></DataRow>
+              <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] leading-4 text-emerald-700">Pedidos, caixa, mesas, cadastros e demais ações auditadas passam a registrar o nome do usuário autenticado.</div>
+              <button onClick={props.onLogout} className="mt-3 w-fit rounded-xl bg-[#202538] px-4 py-3 text-[10px] font-bold text-white">Sair da empresa</button>
+            </Surface>
+
+            <Surface>
+              <SectionHead title="Clientes por mesa" subtitle="Acesso limitado ao pedido e atendimento" />
+              <div className="grid gap-3">
+                <Field label="Mesa de exemplo"><input readOnly value={sampleTable} className="control" /></Field>
+                <Field label="Senha da mesa"><input readOnly value={tableLoginPassword(sampleTable)} className="control" /></Field>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button onClick={() => void navigator.clipboard.writeText(customerUrl)} className="rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold">Copiar link cliente</button>
+                <button onClick={() => setSection('integrations')} className="rounded-xl bg-[#159fe5] px-4 py-3 text-[10px] font-bold text-white">Configurar n8n</button>
+              </div>
+            </Surface>
+          </div>
+        </div>
+
+        {userOpen && (
+          <Modal title={editingUser ? 'Editar usuário' : 'Criar acesso'} onClose={() => setUserOpen(false)}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Empresa"><select value={userForm.companyId} onChange={e => setUserForm({ ...userForm, companyId: e.target.value })} className="control"><option value="">Selecione</option>{companies.filter(company => company.status !== 'Inativa').map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>
+              <Field label="Nome do usuário"><input value={userForm.name} onChange={e => setUserForm({ ...userForm, name: e.target.value })} className="control" /></Field>
+              <Field label="E-mail de acesso"><input type="email" value={userForm.email} onChange={e => setUserForm({ ...userForm, email: e.target.value })} className="control" /></Field>
+              <Field label={editingUser ? 'Nova senha (opcional)' : 'Senha'}><input type="password" value={userForm.password} onChange={e => setUserForm({ ...userForm, password: e.target.value })} className="control" placeholder={editingUser ? 'Deixe em branco para manter' : 'Mínimo 6 caracteres'} /></Field>
+              <Field label="Perfil"><select value={userForm.role} onChange={e => setUserForm({ ...userForm, role: e.target.value as PlatformUserInfo['role'] })} className="control"><option>Administrador</option><option>Gestor</option><option>Operador</option></select></Field>
+              <Field label="Status"><select value={userForm.status} onChange={e => setUserForm({ ...userForm, status: e.target.value as PlatformUserInfo['status'] })} className="control"><option>Ativo</option><option>Inativo</option></select></Field>
+            </div>
+            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">O usuário poderá entrar pela opção Empresa usando este e-mail e senha. O nome dele será usado automaticamente nos logs de auditoria.</div>
+            <div className="mt-5 flex justify-end gap-2"><button onClick={() => setUserOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void savePlatformUser()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar acesso</button></div>
+          </Modal>
+        )}
       </section>
     );
   }
