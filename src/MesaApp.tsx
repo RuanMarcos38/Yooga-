@@ -1480,7 +1480,7 @@ function QuickIcon({ icon, title, onClick }: { icon: ReactNode; title: string; o
 }
 
 type CustomerPortalData = {
-  store: { restaurantName: string; unit: string; serviceFee: number; automaticServiceFee: boolean };
+  store: { restaurantName: string; unit: string; serviceFee: number; automaticServiceFee: boolean; pixEnabled: boolean; cardEnabled: boolean; cashEnabled: boolean };
   table: Table;
   orders: Order[];
   pendingRequests: ServiceRequest[];
@@ -1501,6 +1501,9 @@ const normalizeCustomerPortalData = (raw: Partial<CustomerPortalData>, code: str
       unit: raw.store?.unit || defaultSettings.unit,
       serviceFee: Number.isFinite(serviceFee) ? serviceFee : defaultSettings.serviceFee,
       automaticServiceFee: raw.store?.automaticServiceFee ?? defaultSettings.automaticServiceFee,
+      pixEnabled: raw.store?.pixEnabled ?? defaultSettings.pixEnabled,
+      cardEnabled: raw.store?.cardEnabled ?? defaultSettings.cardEnabled,
+      cashEnabled: raw.store?.cashEnabled ?? defaultSettings.cashEnabled,
     },
     table: {
       id: raw.table?.id || tableName.toLowerCase().replace(/\s+/g, '-'),
@@ -1539,6 +1542,9 @@ const loadCustomerMenuFallback = async (data: CustomerPortalData): Promise<Custo
         unit: state.settings.unit || data.store.unit,
         serviceFee: Number(state.settings.serviceFee ?? data.store.serviceFee),
         automaticServiceFee: state.settings.automaticServiceFee ?? data.store.automaticServiceFee,
+        pixEnabled: state.settings.pixEnabled ?? data.store.pixEnabled,
+        cardEnabled: state.settings.cardEnabled ?? data.store.cardEnabled,
+        cashEnabled: state.settings.cashEnabled ?? data.store.cashEnabled,
       } : data.store,
       menuCategories,
       products,
@@ -1556,6 +1562,11 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   const [customerCategory, setCustomerCategory] = useState('Todos');
   const [placingOrder, setPlacingOrder] = useState(false);
   const [orderMessage, setOrderMessage] = useState('');
+  const [postOrderOpen, setPostOrderOpen] = useState(false);
+  const [paymentChoiceOpen, setPaymentChoiceOpen] = useState(false);
+  const [customerFlowComplete, setCustomerFlowComplete] = useState<'bill' | 'payment' | ''>('');
+  const [completedPaymentMethod, setCompletedPaymentMethod] = useState('');
+  const [lastOrderedProductIds, setLastOrderedProductIds] = useState<string[]>([]);
   const customerStorageKey = 'tapfood-customer-' + code.toLowerCase();
   const [customerForm, setCustomerForm] = useState(() => {
     try {
@@ -1662,18 +1673,51 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     setPlacingOrder(true);
     setOrderMessage('');
     try {
+      const orderedIds = customerCart.map(item => item.productId);
       await api.post('/api/customer/table/' + encodeURIComponent(code) + '/orders', {
         customer: String(customerForm.name || session?.name || 'Cliente da mesa').trim(),
         items: customerCart,
       });
+      setLastOrderedProductIds(orderedIds);
       setCustomerCart([]);
       setCustomerCategory('Todos');
       setOrderMessage('Pedido enviado para a equipe.');
+      setPostOrderOpen(true);
+      setPaymentChoiceOpen(false);
       await load();
     } catch (err) {
       setOrderMessage(err instanceof Error ? err.message : 'Não foi possível enviar o pedido.');
     } finally {
       setPlacingOrder(false);
+    }
+  };
+
+  const continueOrdering = (product?: Product) => {
+    if (product) addCustomerProduct(product);
+    setPostOrderOpen(false);
+    setPaymentChoiceOpen(false);
+    setCustomerFlowComplete('');
+    window.setTimeout(() => document.getElementById('customer-menu')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+
+  const closeBill = async () => {
+    await sendRequest('bill');
+    setPostOrderOpen(false);
+    setPaymentChoiceOpen(false);
+    setCustomerFlowComplete('bill');
+  };
+
+  const requestPayment = async (method: 'Pix' | 'Cartão' | 'Dinheiro') => {
+    setRequesting('payment');
+    try {
+      await api.post('/api/customer/table/' + encodeURIComponent(code) + '/payment', { method });
+      setCompletedPaymentMethod(method);
+      setPostOrderOpen(false);
+      setPaymentChoiceOpen(false);
+      setCustomerFlowComplete('payment');
+      await load();
+    } finally {
+      setRequesting('');
     }
   };
 
@@ -1694,6 +1738,44 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   const orderSubtotal = customerCart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const orderFee = data.store.automaticServiceFee ? orderSubtotal * (data.store.serviceFee / 100) : 0;
   const orderTotal = Number((orderSubtotal + orderFee).toFixed(2));
+  const upsellProduct = data.products
+    .filter(product => product.stock > 0 && !lastOrderedProductIds.includes(product.id))
+    .sort((a, b) => {
+      const score = (product: Product) => {
+        const text = (product.category + ' ' + product.name).toLowerCase();
+        return (/(bebid|sobrem|doce|drink|suco|refriger|água|agua|café|cafe)/.test(text) ? 3 : 0) + (product.featured ? 2 : 0);
+      };
+      return score(b) - score(a);
+    })[0];
+
+  if (customerFlowComplete) {
+    return (
+      <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
+        <header className="border-b bg-[#fffefa] px-4 py-4 shadow-sm">
+          <div className="mx-auto flex max-w-3xl items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-full bg-[#f45f3f] text-white"><Utensils size={18} /></span>
+            <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · {data.table.name}</small></div>
+          </div>
+        </header>
+        <main className="mx-auto grid min-h-[70vh] max-w-xl place-items-center p-4">
+          <section className="w-full rounded-2xl bg-white p-6 text-center shadow-[0_12px_34px_rgba(46,42,38,0.08)]">
+            <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={26} /></span>
+            <h1 className="mt-4 text-xl font-bold">{customerFlowComplete === 'payment' ? 'Pagamento solicitado' : 'Conta solicitada'}</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              {customerFlowComplete === 'payment'
+                ? 'Registramos sua preferência por ' + completedPaymentMethod + '. A equipe da unidade recebeu a solicitação para concluir o pagamento.'
+                : 'A equipe recebeu sua solicitação de fechamento da mesa.'}
+            </p>
+            <div className="mt-5 rounded-xl bg-[#f7f7f5] p-4 text-left">
+              <small className="text-slate-400">Mesa</small><b className="block">{data.table.name}</b>
+              <small className="mt-3 block text-slate-400">Total atual</small><b className="block text-lg text-[#ef5a38]">{BRL(data.table.total || subtotal)}</b>
+            </div>
+            <button onClick={() => { setCustomerFlowComplete(''); setCompletedPaymentMethod(''); window.setTimeout(() => document.getElementById('customer-menu')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="mt-5 w-full rounded-xl border border-[#dfe3e5] px-4 py-3 text-xs font-semibold text-slate-600">Voltar ao cardápio</button>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
@@ -1736,7 +1818,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
           <div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#f7f7f5] p-3"><small className="text-slate-400">Total da mesa</small><b className="mt-1 block text-lg">{BRL(data.table.total || subtotal)}</b></div><div className="rounded-xl bg-[#f7f7f5] p-3"><small className="text-slate-400">Pedidos ativos</small><b className="mt-1 block text-lg">{data.orders.length}</b></div></div>
         </section>
 
-        <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
+        <section id="customer-menu" className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <small className="text-slate-400">Faça seu pedido</small>
@@ -1846,6 +1928,49 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
 
         <p className="pb-6 text-center text-[10px] text-slate-400">Atualização automática a cada 5 segundos. Ative as notificações para ser avisado quando o pedido mudar de etapa.</p>
       </main>
+
+      {postOrderOpen && (
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/45 p-4">
+          <section className="w-full max-w-lg rounded-2xl bg-[#fffefa] p-5 shadow-2xl">
+            <div className="text-center">
+              <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={22} /></span>
+              <h2 className="mt-3 text-xl font-bold">Pedido realizado!</h2>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Seu pedido já foi enviado para a equipe. Deseja aproveitar e pedir mais alguma coisa antes de fechar?</p>
+            </div>
+
+            {upsellProduct && !paymentChoiceOpen && (
+              <div className="mt-4 flex items-center gap-3 rounded-xl border border-[#f5ded6] bg-[#fff5f1] p-3">
+                <img src={productPhoto(upsellProduct)} alt={upsellProduct.name} className="h-14 w-14 rounded-lg object-cover natural-photo" />
+                <div className="min-w-0 flex-1">
+                  <small className="font-bold uppercase text-[#e85b3a]">Que tal completar seu pedido?</small>
+                  <b className="mt-1 block truncate text-sm">{upsellProduct.name}</b>
+                  <span className="text-xs font-bold text-[#ef5a38]">{BRL(upsellProduct.price)}</span>
+                </div>
+                <button onClick={() => continueOrdering(upsellProduct)} className="rounded-xl bg-[#f45f3f] px-3 py-2 text-[10px] font-bold text-white">Adicionar</button>
+              </div>
+            )}
+
+            {!paymentChoiceOpen ? (
+              <div className="mt-5 grid gap-2">
+                <button onClick={() => continueOrdering()} className="w-full rounded-xl bg-[#f45f3f] px-4 py-4 text-sm font-bold text-white">Quero pedir mais</button>
+                <button onClick={() => setPaymentChoiceOpen(true)} className="w-full rounded-xl bg-[#202538] px-4 py-4 text-sm font-bold text-white">Realizar pagamento</button>
+                <button disabled={requesting === 'bill'} onClick={() => void closeBill()} className="w-full rounded-xl border border-[#dfe3e5] bg-white px-4 py-3 text-xs font-semibold text-slate-600 disabled:opacity-50">{requesting === 'bill' ? 'Solicitando...' : 'Fechar a conta, não quero pedir mais'}</button>
+              </div>
+            ) : (
+              <div className="mt-5">
+                <h3 className="text-center text-sm font-bold">Como deseja realizar o pagamento?</h3>
+                <p className="mt-1 text-center text-[10px] text-slate-400">A forma escolhida será enviada à equipe para finalizar a mesa.</p>
+                <div className="mt-4 grid gap-2">
+                  {data.store.pixEnabled && <button disabled={requesting === 'payment'} onClick={() => void requestPayment('Pix')} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-700">Pix</button>}
+                  {data.store.cardEnabled && <button disabled={requesting === 'payment'} onClick={() => void requestPayment('Cartão')} className="rounded-xl border border-[#d8e5f5] bg-[#eef6ff] px-4 py-3 text-xs font-bold text-[#35667d]">Cartão</button>}
+                  {data.store.cashEnabled && <button disabled={requesting === 'payment'} onClick={() => void requestPayment('Dinheiro')} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">Dinheiro</button>}
+                  <button onClick={() => setPaymentChoiceOpen(false)} className="rounded-xl px-4 py-3 text-xs font-semibold text-slate-500">Voltar</button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
 
       <AiAssistant mode="customer" table={data.table.name} />
     </div>
