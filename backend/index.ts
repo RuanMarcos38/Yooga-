@@ -410,26 +410,55 @@ function normalizeState(raw: Partial<S>): S {
   };
 }
 
-async function get() {
-  const result = await db.list<S>('mesa_state', { limit: 1 });
+function currentTenantId() {
+  const session = sessionFromAuthorization();
+  return session?.companyId || '__master__';
+}
+
+function isMasterSession() {
+  const session = sessionFromAuthorization();
+  return Boolean(session && session.role === 'Super Admin');
+}
+
+function tenantCollection(base: string, tenantId = currentTenantId()) {
+  if (!tenantId || tenantId === '__master__') return base;
+  return base + '__' + tenantId.replace(/[^a-z0-9_-]/gi, '_');
+}
+
+function customerTenantFromCode(code: string) {
+  const decoded = decodeURIComponent(code);
+  const separator = decoded.indexOf('~');
+  if (separator <= 0) return '__master__';
+  return decoded.slice(0, separator).replace(/[^a-z0-9_-]/gi, '_') || '__master__';
+}
+
+function customerTableCode(code: string) {
+  const decoded = decodeURIComponent(code);
+  const separator = decoded.indexOf('~');
+  return separator > 0 ? decoded.slice(separator + 1) : decoded;
+}
+
+async function get(tenantId = currentTenantId()) {
+  const collection = tenantCollection('mesa_state', tenantId);
+  const result = await db.list<S>(collection, { limit: 1 });
   if (result.items.length) {
     const { id, ...record } = result.items[0];
     const raw = record as Partial<S>;
     const state = normalizeState(raw);
     if (shouldPersistRepairedTables(raw.tables, state.tables)) {
-      const [ok] = await db.update('mesa_state', [{ id, record: state as unknown as Record<string, unknown> }]);
+      const [ok] = await db.update(collection, [{ id, record: state as unknown as Record<string, unknown> }]);
       if (!ok) throw new Error('save');
     }
     return { id, state };
   }
   const state = seed();
-  const [id] = await db.add('mesa_state', [state as unknown as Record<string, unknown>]);
+  const [id] = await db.add(collection, [state as unknown as Record<string, unknown>]);
   if (!id) throw new Error('seed');
   return { id, state };
 }
 
-async function save(id: string, state: S) {
-  const [ok] = await db.update('mesa_state', [{ id, record: state as unknown as Record<string, unknown> }]);
+async function save(id: string, state: S, tenantId = currentTenantId()) {
+  const [ok] = await db.update(tenantCollection('mesa_state', tenantId), [{ id, record: state as unknown as Record<string, unknown> }]);
   if (!ok) throw new Error('save');
 }
 
@@ -473,6 +502,17 @@ function sessionFromAuthorization() {
   }
 }
 
+function requireMaster() {
+  if (!isMasterSession()) return error('Acesso exclusivo do perfil Master', 403);
+  return null;
+}
+
+function canManageCompany(companyId: string) {
+  const session = sessionFromAuthorization();
+  if (!session) return false;
+  return session.role === 'Super Admin' || (session.companyId === companyId && session.role === 'Administrador');
+}
+
 function currentAuditUser() {
   const session = sessionFromAuthorization();
   if (!session) return 'Administrador';
@@ -493,7 +533,7 @@ function audit(state: S, entity: string, entityId: string, action: string, detai
 }
 
 function tableFromCode(state: S, code: string) {
-  const normalized = decodeURIComponent(code).replace(/-/g, ' ').trim().toLowerCase();
+  const normalized = customerTableCode(code).replace(/-/g, ' ').trim().toLowerCase();
   return state.tables.find(table => table.name.toLowerCase() === normalized);
 }
 
@@ -558,6 +598,7 @@ type IntegrationConfig = {
 };
 
 type OpenApiKeyRecord = {
+  companyId: string;
   name: string;
   prefix: string;
   keyHash: string;
@@ -588,7 +629,7 @@ const sanitizeIntegrationFields = (raw: unknown) => {
 };
 
 async function listIntegrationConfigs() {
-  const result = await db.list<IntegrationConfig>('mesa_integrations', { limit: 50 });
+  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations'), { limit: 50 });
   const map = new Map(result.items.map(item => [item.providerId, item]));
   const current = await get();
 
@@ -629,7 +670,7 @@ async function listIntegrationConfigs() {
 }
 
 async function saveIntegrationConfig(providerId: string, patch: Partial<IntegrationConfig>) {
-  const result = await db.list<IntegrationConfig>('mesa_integrations', { limit: 50 });
+  const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations'), { limit: 50 });
   const existing = result.items.find(item => item.providerId === providerId);
   const record: IntegrationConfig = {
     providerId,
@@ -640,10 +681,10 @@ async function saveIntegrationConfig(providerId: string, patch: Partial<Integrat
     message: patch.message ?? existing?.message,
   };
   if (existing) {
-    const [ok] = await db.update('mesa_integrations', [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
+    const [ok] = await db.update(tenantCollection('mesa_integrations'), [{ id: existing.id, record: record as unknown as Record<string, unknown> }]);
     if (!ok) throw new Error('integration update failed');
   } else {
-    const [id] = await db.add('mesa_integrations', [record as unknown as Record<string, unknown>]);
+    const [id] = await db.add(tenantCollection('mesa_integrations'), [record as unknown as Record<string, unknown>]);
     if (!id) throw new Error('integration create failed');
   }
   return { id: providerId, ...record };
@@ -654,10 +695,10 @@ const hashApiKey = (key: string) => createHash('sha256').update(key).digest('hex
 async function validateOpenApiKey(event: any) {
   const headers = event?.headers || {};
   const raw = headers['x-api-key'] || headers['X-Api-Key'] || headers['X-API-KEY'];
-  if (!raw || typeof raw !== 'string') return false;
+  if (!raw || typeof raw !== 'string') return null;
   const hash = hashApiKey(raw);
-  const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
-  return result.items.some(item => item.active && item.keyHash === hash);
+  const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
+  return result.items.find(item => item.active && item.keyHash === hash) || null;
 }
 
 function validateIntegration(providerId: string, fields: Record<string, string>) {
@@ -817,15 +858,18 @@ export const handler = router({
     const password = String(value.password || '').trim();
 
     if (value.mode === 'cliente') {
-      const current = await get();
-      const table = tableFromCode(current.state, value.table || 'Mesa 01');
+      const tableCode = value.table || 'Mesa 01';
+      const tenantId = customerTenantFromCode(tableCode);
+      const current = await get(tenantId);
+      const table = tableFromCode(current.state, tableCode);
       if (!table) return error('Mesa não encontrada', 404);
       if (password.toLowerCase() !== tableLoginPassword(table.name)) return error('Senha da mesa inválida', 401);
       return json(authSession({
         mode: 'cliente',
         name: table.name,
         role: 'Cliente',
-        tableCode: table.name,
+        tableCode,
+        companyId: tenantId === '__master__' ? undefined : tenantId,
       }));
     }
 
@@ -865,10 +909,13 @@ export const handler = router({
   }],
 
   'GET /api/platform-users': [async () => {
+    const session = sessionFromAuthorization();
+    if (!session) return error('Não autenticado', 401);
     const users = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
     const companies = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
     const companyMap = new Map(companies.items.map(item => [item.id, item.name]));
-    return json(users.items
+    const visibleUsers = session.role === 'Super Admin' ? users.items : users.items.filter(user => user.companyId === session.companyId);
+    return json(visibleUsers
       .map(({ passwordHash, passwordSalt, ...user }) => ({ ...user, companyName: companyMap.get(user.companyId) || 'Empresa não encontrada' }))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
   }],
@@ -878,7 +925,11 @@ export const handler = router({
     const name = String(value.name || '').trim();
     const email = String(value.email || '').trim().toLowerCase();
     const password = String(value.password || '');
-    const companyId = String(value.companyId || '');
+    const session = sessionFromAuthorization();
+    if (!session) return error('Não autenticado', 401);
+    const requestedCompanyId = String(value.companyId || '');
+    const companyId = session.role === 'Super Admin' ? requestedCompanyId : String(session.companyId || '');
+    if (!canManageCompany(companyId)) return error('Sem permissão para esta empresa', 403);
     if (!name || !email || !companyId) return error('Nome, e-mail e empresa são obrigatórios', 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
     if (password.length < 6) return error('A senha deve ter no mínimo 6 caracteres', 400);
@@ -905,9 +956,11 @@ export const handler = router({
     const result = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
     const current = result.items.find(item => item.id === params.id);
     if (!current) return error('Usuário não encontrado', 404);
+    if (!canManageCompany(current.companyId)) return error('Sem permissão para este usuário', 403);
     const email = String(value.email ?? current.email).trim().toLowerCase();
     const name = String(value.name ?? current.name).trim();
-    const companyId = String(value.companyId ?? current.companyId);
+    const session = sessionFromAuthorization();
+    const companyId = session?.role === 'Super Admin' ? String(value.companyId ?? current.companyId) : current.companyId;
     if (!name || !email || !companyId) return error('Nome, e-mail e empresa são obrigatórios', 400);
     const duplicate = result.items.find(item => item.id !== current.id && item.email.toLowerCase() === email);
     if (duplicate) return error('Já existe outro usuário com este e-mail', 409);
@@ -935,17 +988,24 @@ export const handler = router({
   }],
 
   'DELETE /api/platform-users/:id': [async ({ params }) => {
+    const result = await db.list<PlatformUserRecord>('tapfood_platform_users', { limit: 1000 });
+    const target = result.items.find(item => item.id === params.id);
+    if (!target || !canManageCompany(target.companyId)) return error('Usuário não encontrado ou sem permissão', 404);
     const [deleted] = await db.delete('tapfood_platform_users', [params.id]);
     if (!deleted) return error('Usuário não encontrado', 404);
     return json({ success: true });
   }],
 
   'GET /api/companies': [async () => {
+    const session = sessionFromAuthorization();
+    if (!session) return error('Não autenticado', 401);
     const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
-    return json(result.items.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+    const visible = session.role === 'Super Admin' ? result.items : result.items.filter(item => item.id === session.companyId);
+    return json(visible.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
   }],
 
   'POST /api/companies': [async ({ body }) => {
+    const denied = requireMaster(); if (denied) return denied;
     const value = body as Partial<CompanyRecord>;
     const name = String(value.name || '').trim();
     const email = String(value.email || '').trim().toLowerCase();
@@ -971,6 +1031,7 @@ export const handler = router({
   }],
 
   'PUT /api/companies/:id': [async ({ params, body }) => {
+    const denied = requireMaster(); if (denied) return denied;
     const value = body as Partial<CompanyRecord>;
     const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
     const current = result.items.find(item => item.id === params.id);
@@ -997,6 +1058,7 @@ export const handler = router({
   }],
 
   'DELETE /api/companies/:id': [async ({ params }) => {
+    const denied = requireMaster(); if (denied) return denied;
     const [deleted] = await db.delete('tapfood_companies', [params.id]);
     if (!deleted) return error('Empresa não encontrada', 404);
     return json({ success: true });
@@ -1074,8 +1136,9 @@ export const handler = router({
   }],
 
   'GET /api/open/v1/keys': [async () => {
-    const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 100 });
-    return json(result.items.map(item => ({
+    const tenantId = currentTenantId();
+    const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
+    return json(result.items.filter(item => (item.companyId || '__master__') === tenantId).map(item => ({
       id: item.id,
       name: item.name,
       prefix: item.prefix,
@@ -1091,6 +1154,7 @@ export const handler = router({
     const key = 'mrf_live_' + randomBytes(24).toString('hex');
     const prefix = key.slice(0, 16);
     const record: OpenApiKeyRecord = {
+      companyId: currentTenantId(),
       name: name.slice(0, 80),
       prefix,
       keyHash: hashApiKey(key),
@@ -1109,6 +1173,10 @@ export const handler = router({
   }],
 
   'DELETE /api/open/v1/keys/:id': [async ({ params }) => {
+    const tenantId = currentTenantId();
+    const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
+    const key = result.items.find(item => item.id === params.id && (item.companyId || '__master__') === tenantId);
+    if (!key) return error('Chave não encontrada', 404);
     const [ok] = await db.delete('mesa_open_api_keys', [params.id]);
     if (!ok) return error('Chave não encontrada', 404);
     return json({ revoked: true });
@@ -1117,8 +1185,9 @@ export const handler = router({
   'GET /api/open/v1/health': [async () => json({ status: 'ok', service: 'TAPFOOD Open API', version: 'v1' })],
 
   'GET /api/open/v1/menu': [async ({ event }) => {
-    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
-    const current = await get();
+    const apiKey = await validateOpenApiKey(event);
+    if (!apiKey) return error('API key inválida', 401);
+    const current = await get(apiKey.companyId || '__master__');
     return json(current.state.products.filter(product => product.active).map(product => ({
       id: product.id,
       sku: product.code || product.id,
@@ -1133,22 +1202,25 @@ export const handler = router({
   }],
 
   'GET /api/open/v1/tables': [async ({ event }) => {
-    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
-    const current = await get();
+    const apiKey = await validateOpenApiKey(event);
+    if (!apiKey) return error('API key inválida', 401);
+    const current = await get(apiKey.companyId || '__master__');
     return json(current.state.tables);
   }],
 
   'GET /api/open/v1/orders': [async ({ event }) => {
-    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
-    const current = await get();
+    const apiKey = await validateOpenApiKey(event);
+    if (!apiKey) return error('API key inválida', 401);
+    const current = await get(apiKey.companyId || '__master__');
     return json(current.state.orders.slice(0, 100));
   }],
 
   'POST /api/open/v1/orders': [async ({ event, body }) => {
-    if (!await validateOpenApiKey(event)) return error('API key inválida', 401);
+    const apiKey = await validateOpenApiKey(event);
+    if (!apiKey) return error('API key inválida', 401);
     const value = body as { channel?: string; table?: string; customer?: string; paymentMethod?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
-    const current = await get();
+    const current = await get(apiKey.companyId || '__master__');
     const validated = validateOrderItems(current.state, value.items);
     if ('error' in validated) return error(String(validated.error), 400);
 
@@ -1175,7 +1247,7 @@ export const handler = router({
     };
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido recebido pela API aberta', order.code + ' · ' + order.channel);
-    await save(current.id, current.state);
+    await save(current.id, current.state, apiKey.companyId || '__master__');
     await notifyN8n(current.state, 'order.created_from_api', { order });
     return json(order, 201);
   }],
@@ -1502,7 +1574,8 @@ export const handler = router({
   'GET /api/state': [async () => json(await withSignedImages((await get()).state))],
 
   'GET /api/customer/table/:code': [async ({ params }) => {
-    const current = await get();
+    const tenantId = customerTenantFromCode(params.code);
+    const current = await get(tenantId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
     const publicState = await withSignedImages(current.state);
@@ -1553,7 +1626,8 @@ export const handler = router({
   'POST /api/customer/table/:code/orders': [async ({ params, body }) => {
     const value = body as { customer?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
-    const current = await get();
+    const tenantId = customerTenantFromCode(params.code);
+    const current = await get(tenantId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
     const validated = validateOrderItems(current.state, value.items);
@@ -1585,7 +1659,7 @@ export const handler = router({
     };
     applyOrderEffects(current.state, order);
     audit(current.state, 'order', order.id, 'Pedido enviado pelo cliente', order.code + ' · ' + table.name, 'Cliente');
-    await save(current.id, current.state);
+    await save(current.id, current.state, tenantId);
     await notifyN8n(current.state, 'order.created_from_customer', { order, table });
     return json(order, 201);
   }],
@@ -1598,7 +1672,8 @@ export const handler = router({
     const email = String(value.email || '').trim().toLowerCase();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
 
-    const current = await get();
+    const tenantId = customerTenantFromCode(params.code);
+    const current = await get(tenantId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
 
@@ -1624,7 +1699,7 @@ export const handler = router({
       .forEach(order => { order.customer = customer!.name; });
 
     audit(current.state, 'customer', customer.id, 'Cliente conectado à mesa', customer.name + ' · ' + table.name, 'Cliente');
-    await save(current.id, current.state);
+    await save(current.id, current.state, tenantId);
     await notifyN8n(current.state, 'customer.registered', { customer, table });
     return json(customer, 201);
   }],
@@ -1632,7 +1707,8 @@ export const handler = router({
   'POST /api/customer/table/:code/request': [async ({ params, body }) => {
     const value = body as { type?: 'waiter' | 'bill' };
     if (!value.type || !['waiter', 'bill'].includes(value.type)) return error('Solicitação inválida', 400);
-    const current = await get();
+    const tenantId = customerTenantFromCode(params.code);
+    const current = await get(tenantId);
     const table = tableFromCode(current.state, params.code);
     if (!table) return error('Mesa não encontrada', 404);
     const existing = current.state.serviceRequests.find(request => request.table === table.name && request.type === value.type && request.status === 'pending');
@@ -1646,7 +1722,7 @@ export const handler = router({
     };
     current.state.serviceRequests.unshift(request);
     audit(current.state, 'table', table.id, value.type === 'bill' ? 'Conta solicitada pelo cliente' : 'Garçom solicitado pelo cliente', table.name, 'Cliente');
-    await save(current.id, current.state);
+    await save(current.id, current.state, tenantId);
     await notifyN8n(current.state, 'table.customer_request', { request, table });
     return json(request, 201);
   }],
@@ -1658,7 +1734,7 @@ export const handler = router({
     request.status = 'resolved';
     request.resolvedAt = new Date().toISOString();
     audit(current.state, 'table', request.table, 'Solicitação atendida', (request.type === 'bill' ? 'Conta' : 'Garçom') + ' · ' + request.table);
-    await save(current.id, current.state);
+    await save(current.id, current.state, tenantId);
     await notifyN8n(current.state, 'table.request_resolved', { request });
     return json(request);
   }],
@@ -1675,7 +1751,7 @@ export const handler = router({
       openedAt: new Date().toISOString(),
     };
     audit(current.state, 'cash', 'cash', 'Caixa aberto', 'Valor de abertura ' + openingAmount.toFixed(2));
-    await save(current.id, current.state);
+    await save(current.id, current.state, tenantId);
     return json(current.state.cashRegister);
   }],
 
@@ -1702,7 +1778,7 @@ export const handler = router({
       closingAmount,
     };
     audit(current.state, 'cash', 'cash', 'Caixa fechado', 'Saldo de fechamento ' + closingAmount.toFixed(2));
-    await save(current.id, current.state);
+    await save(current.id, current.state, tenantId);
     return json(current.state.cashRegister);
   }],
 
