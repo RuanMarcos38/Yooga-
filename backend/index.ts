@@ -144,6 +144,10 @@ type CompanyRecord = {
   updatedAt: string;
 };
 
+function normalizeCnpj(value: unknown) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14);
+}
+
 type PlatformUserRecord = {
   id: string;
   companyId: string;
@@ -1097,6 +1101,49 @@ export const handler = router({
     return json({ success: true });
   }],
 
+  'GET /api/cnpj/:cnpj': [async ({ params }) => {
+    const denied = requireMaster(); if (denied) return denied;
+    const cnpj = normalizeCnpj(params.cnpj);
+    if (cnpj.length !== 14) return error('CNPJ deve possuir 14 caracteres', 400);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + encodeURIComponent(cnpj), {
+        headers: { 'Accept': 'application/json', 'User-Agent': 'TAPFOOD/1.0' },
+        signal: controller.signal,
+      });
+      if (response.status === 404) return error('CNPJ não encontrado', 404);
+      if (!response.ok) return error('Serviço de consulta CNPJ indisponível', 502);
+      const data = await response.json() as Record<string, any>;
+      const addressParts = [
+        [data.descricao_tipo_de_logradouro, data.logradouro].filter(Boolean).join(' '),
+        data.numero,
+        data.complemento,
+        data.bairro,
+        data.municipio,
+        data.uf,
+        data.cep,
+      ].map(value => String(value || '').trim()).filter(Boolean);
+
+      return json({
+        cnpj: normalizeCnpj(data.cnpj || cnpj),
+        legalName: String(data.razao_social || '').trim(),
+        tradeName: String(data.nome_fantasia || data.razao_social || '').trim(),
+        address: addressParts.join(', '),
+        phone: String(data.ddd_telefone_1 || data.ddd_telefone_2 || '').replace(/\D/g, ''),
+        email: String(data.email || '').trim().toLowerCase(),
+        status: String(data.descricao_situacao_cadastral || '').trim(),
+        source: 'BrasilAPI / dados públicos do CNPJ',
+      });
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return error('Tempo excedido na consulta do CNPJ', 504);
+      return error('Não foi possível consultar o CNPJ', 502);
+    } finally {
+      clearTimeout(timer);
+    }
+  }],
+
   'GET /api/companies': [async () => {
     const session = sessionFromAuthorization();
     if (!session) return error('Não autenticado', 401);
@@ -1110,17 +1157,17 @@ export const handler = router({
     const value = body as Partial<CompanyRecord>;
     const legalName = String(value.legalName || value.name || '').trim();
     const tradeName = String(value.tradeName || value.name || '').trim();
-    const document = String(value.document || '').replace(/\D/g, '');
+    const document = normalizeCnpj(value.document);
     const address = String(value.address || '').trim();
     const email = String(value.email || '').trim().toLowerCase();
     const phone = String(value.phone || '').replace(/\D/g, '');
     if (!legalName) return error('Razão Social é obrigatória', 400);
     if (!tradeName) return error('Nome Fantasia é obrigatório', 400);
-    if (document.length !== 14) return error('CNPJ deve possuir 14 dígitos', 400);
+    if (document.length !== 14) return error('CNPJ deve possuir 14 caracteres', 400);
     if (!address) return error('Endereço completo é obrigatório', 400);
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
     if (phone.length < 10 || phone.length > 13) return error('Telefone inválido', 400);
-    const duplicateCnpj = (await db.list<CompanyRecord>('tapfood_companies', { limit: 500 })).items.some(item => String(item.document || '').replace(/\D/g, '') === document);
+    const duplicateCnpj = (await db.list<CompanyRecord>('tapfood_companies', { limit: 500 })).items.some(item => normalizeCnpj(item.document) === document);
     if (duplicateCnpj) return error('Já existe uma empresa cadastrada com este CNPJ', 409);
     const now = new Date().toISOString();
     const ids = await db.add('tapfood_companies', [{
@@ -1150,17 +1197,17 @@ export const handler = router({
     if (!current) return error('Empresa não encontrada', 404);
     const legalName = String(value.legalName ?? current.legalName ?? current.name).trim();
     const tradeName = String(value.tradeName ?? current.tradeName ?? value.name ?? current.name).trim();
-    const document = String(value.document ?? current.document ?? '').replace(/\D/g, '');
+    const document = normalizeCnpj(value.document ?? current.document);
     const address = String(value.address ?? current.address ?? '').trim();
     const email = String(value.email ?? current.email ?? '').trim().toLowerCase();
     const phone = String(value.phone ?? current.phone ?? '').replace(/\D/g, '');
     if (!legalName) return error('Razão Social é obrigatória', 400);
     if (!tradeName) return error('Nome Fantasia é obrigatório', 400);
-    if (document.length !== 14) return error('CNPJ deve possuir 14 dígitos', 400);
+    if (document.length !== 14) return error('CNPJ deve possuir 14 caracteres', 400);
     if (!address) return error('Endereço completo é obrigatório', 400);
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
     if (phone.length < 10 || phone.length > 13) return error('Telefone inválido', 400);
-    const duplicateCnpj = result.items.some(item => item.id !== current.id && String(item.document || '').replace(/\D/g, '') === document);
+    const duplicateCnpj = result.items.some(item => item.id !== current.id && normalizeCnpj(item.document) === document);
     if (duplicateCnpj) return error('Já existe outra empresa cadastrada com este CNPJ', 409);
     const next: Omit<CompanyRecord, 'id'> = {
       name: tradeName.slice(0, 160),
