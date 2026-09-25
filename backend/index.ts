@@ -131,7 +131,10 @@ type S = {
 type CompanyRecord = {
   id: string;
   name: string;
+  legalName?: string;
+  tradeName?: string;
   document?: string;
+  address?: string;
   email?: string;
   phone?: string;
   contactName?: string;
@@ -1105,16 +1108,27 @@ export const handler = router({
   'POST /api/companies': [async ({ body }) => {
     const denied = requireMaster(); if (denied) return denied;
     const value = body as Partial<CompanyRecord>;
-    const name = String(value.name || '').trim();
+    const legalName = String(value.legalName || value.name || '').trim();
+    const tradeName = String(value.tradeName || value.name || '').trim();
+    const document = String(value.document || '').replace(/\D/g, '');
+    const address = String(value.address || '').trim();
     const email = String(value.email || '').trim().toLowerCase();
     const phone = String(value.phone || '').replace(/\D/g, '');
-    if (!name) return error('Nome da empresa é obrigatório', 400);
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
-    if (phone && (phone.length < 10 || phone.length > 13)) return error('Telefone inválido', 400);
+    if (!legalName) return error('Razão Social é obrigatória', 400);
+    if (!tradeName) return error('Nome Fantasia é obrigatório', 400);
+    if (document.length !== 14) return error('CNPJ deve possuir 14 dígitos', 400);
+    if (!address) return error('Endereço completo é obrigatório', 400);
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+    if (phone.length < 10 || phone.length > 13) return error('Telefone inválido', 400);
+    const duplicateCnpj = (await db.list<CompanyRecord>('tapfood_companies', { limit: 500 })).items.some(item => String(item.document || '').replace(/\D/g, '') === document);
+    if (duplicateCnpj) return error('Já existe uma empresa cadastrada com este CNPJ', 409);
     const now = new Date().toISOString();
     const ids = await db.add('tapfood_companies', [{
-      name: name.slice(0, 160),
-      document: String(value.document || '').trim().slice(0, 30),
+      name: tradeName.slice(0, 160),
+      legalName: legalName.slice(0, 200),
+      tradeName: tradeName.slice(0, 160),
+      document,
+      address: address.slice(0, 300),
       email: email.slice(0, 160),
       phone,
       contactName: String(value.contactName || '').trim().slice(0, 120),
@@ -1134,15 +1148,26 @@ export const handler = router({
     const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
     const current = result.items.find(item => item.id === params.id);
     if (!current) return error('Empresa não encontrada', 404);
-    const name = String(value.name ?? current.name).trim();
+    const legalName = String(value.legalName ?? current.legalName ?? current.name).trim();
+    const tradeName = String(value.tradeName ?? current.tradeName ?? value.name ?? current.name).trim();
+    const document = String(value.document ?? current.document ?? '').replace(/\D/g, '');
+    const address = String(value.address ?? current.address ?? '').trim();
     const email = String(value.email ?? current.email ?? '').trim().toLowerCase();
     const phone = String(value.phone ?? current.phone ?? '').replace(/\D/g, '');
-    if (!name) return error('Nome da empresa é obrigatório', 400);
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
-    if (phone && (phone.length < 10 || phone.length > 13)) return error('Telefone inválido', 400);
+    if (!legalName) return error('Razão Social é obrigatória', 400);
+    if (!tradeName) return error('Nome Fantasia é obrigatório', 400);
+    if (document.length !== 14) return error('CNPJ deve possuir 14 dígitos', 400);
+    if (!address) return error('Endereço completo é obrigatório', 400);
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+    if (phone.length < 10 || phone.length > 13) return error('Telefone inválido', 400);
+    const duplicateCnpj = result.items.some(item => item.id !== current.id && String(item.document || '').replace(/\D/g, '') === document);
+    if (duplicateCnpj) return error('Já existe outra empresa cadastrada com este CNPJ', 409);
     const next: Omit<CompanyRecord, 'id'> = {
-      name: name.slice(0, 160),
-      document: String(value.document ?? current.document ?? '').trim().slice(0, 30),
+      name: tradeName.slice(0, 160),
+      legalName: legalName.slice(0, 200),
+      tradeName: tradeName.slice(0, 160),
+      document,
+      address: address.slice(0, 300),
       email: email.slice(0, 160),
       phone,
       contactName: String(value.contactName ?? current.contactName ?? '').trim().slice(0, 120),
