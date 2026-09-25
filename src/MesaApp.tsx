@@ -58,6 +58,7 @@ import {
   LogOut,
   CircleDollarSign,
   Megaphone,
+  Palette,
 } from 'lucide-react';
 
 type Product = {
@@ -89,6 +90,14 @@ type MenuCategory = {
 type AppSettings = {
   restaurantName: string;
   unit: string;
+  brandName: string;
+  brandTagline: string;
+  brandPrimaryColor: string;
+  brandLogoUrl?: string;
+  brandLogoPath?: string;
+  brandSupportEmail?: string;
+  brandSupportPhone?: string;
+  hideTapfoodBranding: boolean;
   serviceFee: number;
   automaticServiceFee: boolean;
   qrMenuEnabled: boolean;
@@ -187,6 +196,14 @@ const pageFromPath = (pathname: string): Page => {
 const defaultSettings: AppSettings = {
   restaurantName: 'TAPFOOD',
   unit: 'Unidade Principal',
+  brandName: 'TAPFOOD',
+  brandTagline: 'Gestão de Restaurantes',
+  brandPrimaryColor: '#f45f3f',
+  brandLogoUrl: '',
+  brandLogoPath: '',
+  brandSupportEmail: '',
+  brandSupportPhone: '',
+  hideTapfoodBranding: false,
   serviceFee: 10,
   automaticServiceFee: true,
   qrMenuEnabled: true,
@@ -302,6 +319,23 @@ export default function MesaApp() {
   if (!session) return <LoginScreen onLogin={handleLogin} />;
   if (session.mode === 'cliente') return <CustomerPortal code={session.tableCode || 'Mesa 01'} session={session} onLogout={handleLogout} />;
   return <AdminApp session={session} onLogout={handleLogout} />;
+}
+
+function BrandMark({ settings, compact = false }: { settings: AppSettings | CustomerPortalData['store']; compact?: boolean }) {
+  const name = settings.brandName || ('restaurantName' in settings ? settings.restaurantName : 'TAPFOOD');
+  const color = settings.brandPrimaryColor || '#f45f3f';
+  const logo = settings.brandLogoUrl || '';
+  return (
+    <div className="flex items-center gap-2">
+      {logo
+        ? <img src={logo} alt={name} className={(compact ? 'h-9 w-9' : 'h-11 w-11') + ' rounded-lg object-contain bg-white'} />
+        : <span style={{ backgroundColor: color }} className={(compact ? 'h-9 w-9' : 'h-11 w-11') + ' grid place-items-center rounded-lg text-white'}><Utensils size={compact ? 16 : 20} /></span>}
+      <div className="min-w-0">
+        <strong className={(compact ? 'text-lg' : 'text-2xl') + ' block truncate'} style={{ color }}>{name}</strong>
+        <span className="block truncate text-[10px] text-slate-400">{settings.brandTagline || 'Gestão de Restaurantes'}</span>
+      </div>
+    </div>
+  );
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
@@ -554,15 +588,8 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
   return (
     <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
       <aside className={'fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col border-r border-[#ebe7e2] bg-[#fffefa] px-4 py-5 shadow-[6px_0_30px_rgba(45,42,38,0.025)] transition-transform lg:translate-x-0 ' + (menu ? 'translate-x-0' : '-translate-x-full')}>
-        <div className="mb-5 flex items-center gap-2 px-2">
-          <span className="relative grid h-9 w-9 place-items-center rounded-full bg-[#f45f3f] text-lg text-white">
-            <span className="absolute right-0 top-0 h-3 w-3 rounded-bl-full bg-white" />
-            <Utensils size={15} />
-          </span>
-          <div>
-            <strong className="block text-lg tracking-normal text-[#ef5a38]">TAP<span className="text-[#202538]">FOOD</span></strong>
-            <span className="block text-[10px] text-slate-400">Gestão de Restaurantes</span>
-          </div>
+        <div className="mb-5 px-2">
+          <BrandMark settings={data.settings} compact />
         </div>
 
         <nav className="space-y-2 overflow-y-auto pb-3">
@@ -1547,7 +1574,7 @@ function QuickIcon({ icon, title, onClick }: { icon: ReactNode; title: string; o
 }
 
 type CustomerPortalData = {
-  store: { restaurantName: string; unit: string; serviceFee: number; automaticServiceFee: boolean; pixEnabled: boolean; cardEnabled: boolean; cashEnabled: boolean };
+  store: { restaurantName: string; unit: string; serviceFee: number; automaticServiceFee: boolean; pixEnabled: boolean; cardEnabled: boolean; cashEnabled: boolean; brandName: string; brandTagline: string; brandPrimaryColor: string; brandLogoUrl?: string; brandSupportEmail?: string; brandSupportPhone?: string; hideTapfoodBranding: boolean };
   table: Table;
   orders: Order[];
   pendingRequests: ServiceRequest[];
@@ -1571,6 +1598,13 @@ const normalizeCustomerPortalData = (raw: Partial<CustomerPortalData>, code: str
       pixEnabled: raw.store?.pixEnabled ?? defaultSettings.pixEnabled,
       cardEnabled: raw.store?.cardEnabled ?? defaultSettings.cardEnabled,
       cashEnabled: raw.store?.cashEnabled ?? defaultSettings.cashEnabled,
+      brandName: raw.store?.brandName || raw.store?.restaurantName || defaultSettings.brandName,
+      brandTagline: raw.store?.brandTagline || defaultSettings.brandTagline,
+      brandPrimaryColor: raw.store?.brandPrimaryColor || defaultSettings.brandPrimaryColor,
+      brandLogoUrl: raw.store?.brandLogoUrl || '',
+      brandSupportEmail: raw.store?.brandSupportEmail || '',
+      brandSupportPhone: raw.store?.brandSupportPhone || '',
+      hideTapfoodBranding: raw.store?.hideTapfoodBranding ?? defaultSettings.hideTapfoodBranding,
     },
     table: {
       id: raw.table?.id || tableName.toLowerCase().replace(/\s+/g, '-'),
@@ -1612,6 +1646,13 @@ const loadCustomerMenuFallback = async (data: CustomerPortalData): Promise<Custo
         pixEnabled: state.settings.pixEnabled ?? data.store.pixEnabled,
         cardEnabled: state.settings.cardEnabled ?? data.store.cardEnabled,
         cashEnabled: state.settings.cashEnabled ?? data.store.cashEnabled,
+        brandName: state.settings.brandName || data.store.brandName,
+        brandTagline: state.settings.brandTagline || data.store.brandTagline,
+        brandPrimaryColor: state.settings.brandPrimaryColor || data.store.brandPrimaryColor,
+        brandLogoUrl: state.settings.brandLogoUrl || data.store.brandLogoUrl,
+        brandSupportEmail: state.settings.brandSupportEmail || data.store.brandSupportEmail,
+        brandSupportPhone: state.settings.brandSupportPhone || data.store.brandSupportPhone,
+        hideTapfoodBranding: state.settings.hideTapfoodBranding ?? data.store.hideTapfoodBranding,
       } : data.store,
       menuCategories,
       products,
@@ -1820,8 +1861,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
       <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
         <header className="border-b bg-[#fffefa] px-4 py-4 shadow-sm">
           <div className="mx-auto flex max-w-3xl items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-full bg-[#f45f3f] text-white"><Utensils size={18} /></span>
-            <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · {data.table.name}</small></div>
+            <div className="min-w-0 flex-1"><BrandMark settings={data.store} compact /><small className="ml-11 block text-slate-400">{data.store.unit} · {data.table.name}</small></div>
           </div>
         </header>
         <main className="mx-auto grid min-h-[70vh] max-w-xl place-items-center p-4">
@@ -2872,7 +2912,7 @@ type PlatformUserInfo = {
   updatedAt: string;
 };
 
-type SettingsSection = 'hub' | 'general' | 'integrations' | 'payments' | 'delivery' | 'access' | 'marketing' | 'print' | 'tools' | 'open-api' | 'companies' | 'qr';
+type SettingsSection = 'hub' | 'general' | 'branding' | 'integrations' | 'payments' | 'delivery' | 'access' | 'marketing' | 'print' | 'tools' | 'open-api' | 'companies' | 'qr';
 
 const integrationCatalog = [
   { id: 'n8n', name: 'n8n / WhatsApp', category: 'Automação', description: 'Webhook para avisar cliente e operação sobre cadastro, mesa, pedido pronto e mudança de status.', badge: 'Webhook', icon: MessageCircle },
@@ -2908,6 +2948,8 @@ function SettingsView(props: ViewProps) {
   const [newApiKey, setNewApiKey] = useState('');
   const [apiKeyName, setApiKeyName] = useState('Integração principal');
   const [printMessage, setPrintMessage] = useState('');
+  const [brandingUploading, setBrandingUploading] = useState(false);
+  const [brandingMessage, setBrandingMessage] = useState('');
   const [companies, setCompanies] = useState<CompanyInfo[]>([]);
   const [companyOpen, setCompanyOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CompanyInfo | null>(null);
@@ -2932,6 +2974,28 @@ function SettingsView(props: ViewProps) {
     role: 'Operador' as PlatformUserInfo['role'],
     status: 'Ativo' as PlatformUserInfo['status'],
   });
+
+  const uploadBrandLogo = async (file: File | null) => {
+    if (!file) return;
+    setBrandingUploading(true);
+    setBrandingMessage('');
+    try {
+      const image = await compressImage(file);
+      const response = await api.post<{ brandLogoUrl: string; brandLogoPath: string }>('/api/settings/branding/logo', image);
+      props.setSettingsForm({ ...props.settingsForm, brandLogoUrl: response.data.brandLogoUrl, brandLogoPath: response.data.brandLogoPath });
+      setBrandingMessage('Logo atualizada.');
+    } catch (err) {
+      setBrandingMessage(err instanceof Error ? err.message : 'Não foi possível enviar a logo.');
+    } finally {
+      setBrandingUploading(false);
+    }
+  };
+
+  const removeBrandLogo = async () => {
+    await api.delete('/api/settings/branding/logo');
+    props.setSettingsForm({ ...props.settingsForm, brandLogoUrl: '', brandLogoPath: '' });
+    setBrandingMessage('Logo removida.');
+  };
 
   const saveGeneral = async () => {
     if (!props.settingsForm.restaurantName.trim() || !props.settingsForm.unit.trim()) return;
@@ -3607,6 +3671,53 @@ function SettingsView(props: ViewProps) {
     );
   }
 
+  if (section === 'branding') {
+    return (
+      <section>
+        <SettingsBack title="White Label" onBack={showHub} subtitle="Personalize a identidade visual desta empresa/unidade" />
+        <div className="grid gap-4 xl:grid-cols-[1fr_.8fr]">
+          <Surface>
+            <SectionHead title="Identidade da marca" subtitle="Nome, logo, cor e contato exibidos no sistema e no portal do cliente." />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Nome da marca"><input value={props.settingsForm.brandName} onChange={e => props.setSettingsForm({ ...props.settingsForm, brandName: e.target.value })} className="control" /></Field>
+              <Field label="Subtítulo"><input value={props.settingsForm.brandTagline} onChange={e => props.setSettingsForm({ ...props.settingsForm, brandTagline: e.target.value })} placeholder="Ex.: Gestão de Restaurantes" className="control" /></Field>
+              <Field label="Cor principal"><div className="flex gap-2"><input type="color" value={props.settingsForm.brandPrimaryColor} onChange={e => props.setSettingsForm({ ...props.settingsForm, brandPrimaryColor: e.target.value })} className="h-10 w-12 rounded border p-1" /><input value={props.settingsForm.brandPrimaryColor} onChange={e => props.setSettingsForm({ ...props.settingsForm, brandPrimaryColor: e.target.value })} className="control flex-1" /></div></Field>
+              <Field label="E-mail de suporte"><input type="email" value={props.settingsForm.brandSupportEmail || ''} onChange={e => props.setSettingsForm({ ...props.settingsForm, brandSupportEmail: e.target.value })} className="control" /></Field>
+              <Field label="Telefone de suporte"><input value={props.settingsForm.brandSupportPhone || ''} onChange={e => props.setSettingsForm({ ...props.settingsForm, brandSupportPhone: e.target.value })} className="control" /></Field>
+              <Field label="Marca TAPFOOD"><select value={props.settingsForm.hideTapfoodBranding ? 'ocultar' : 'mostrar'} onChange={e => props.setSettingsForm({ ...props.settingsForm, hideTapfoodBranding: e.target.value === 'ocultar' })} className="control"><option value="mostrar">Mostrar referência TAPFOOD</option><option value="ocultar">Ocultar referência TAPFOOD</option></select></Field>
+            </div>
+            <div className="mt-4">
+              <span className="mb-1 block text-[10px] font-semibold text-slate-500">Logo</span>
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#e6e8ea] bg-white p-3">
+                <div className="grid h-16 w-16 place-items-center overflow-hidden rounded-xl border bg-[#fafafa]">
+                  {props.settingsForm.brandLogoUrl ? <img src={props.settingsForm.brandLogoUrl} alt="Logo" className="h-full w-full object-contain" /> : <Utensils size={24} style={{ color: props.settingsForm.brandPrimaryColor }} />}
+                </div>
+                <label className="cursor-pointer rounded-xl border px-4 py-3 text-[10px] font-semibold">
+                  {brandingUploading ? 'Enviando...' : 'Enviar logo'}
+                  <input disabled={brandingUploading} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => void uploadBrandLogo(e.target.files?.[0] || null)} />
+                </label>
+                {props.settingsForm.brandLogoUrl && <button onClick={() => void removeBrandLogo()} className="rounded-xl border border-red-100 px-4 py-3 text-[10px] font-semibold text-red-500">Remover logo</button>}
+              </div>
+              {brandingMessage && <p className="mt-2 text-[10px] text-slate-500">{brandingMessage}</p>}
+            </div>
+            <button onClick={() => void saveGeneral()} className="mt-4 rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar White Label</button>
+          </Surface>
+          <Surface>
+            <SectionHead title="Pré-visualização" subtitle="Exemplo da identidade aplicada." />
+            <div className="rounded-2xl border bg-white p-5">
+              <BrandMark settings={props.settingsForm} />
+              <div className="mt-5 rounded-xl p-4 text-white" style={{ backgroundColor: props.settingsForm.brandPrimaryColor }}>
+                <b className="block text-sm">{props.settingsForm.restaurantName}</b>
+                <small className="opacity-80">{props.settingsForm.unit}</small>
+              </div>
+              <p className="mt-4 text-[10px] leading-5 text-slate-400">A personalização é isolada por empresa/unidade e não altera pedidos, usuários, QR Codes ou dados operacionais.</p>
+            </div>
+          </Surface>
+        </div>
+      </section>
+    );
+  }
+
   if (section === 'general') {
     return (
       <section>
@@ -3725,6 +3836,7 @@ function SettingsView(props: ViewProps) {
 
       <SettingsGroup title="Configurações">
         <AjusteTile icon={<Settings size={29} />} title="Geral" onClick={() => setSection('general')} />
+        <AjusteTile icon={<Palette size={29} />} title="White Label" onClick={() => setSection('branding')} />
         {props.session.role === 'Super Admin' && <AjusteTile icon={<Store size={29} />} title="Empresas contratantes" onClick={() => setSection('companies')} />}
         <AjusteTile icon={<UserCog size={29} />} title="Acessos" onClick={() => setSection('access')} />
         <AjusteTile icon={<Printer size={29} />} title="Impressoras" onClick={() => setSection('print')} />
