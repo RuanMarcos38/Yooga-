@@ -1,12 +1,14 @@
 import { handler } from './dist-backend/backend/index.js';
 
+const rawCall = async (method, path, body, token) => handler.handle({
+  method,
+  path,
+  headers: token ? { authorization: 'Bearer ' + token } : {},
+  body,
+});
+
 const call = async (method, path, body, token) => {
-  const result = await handler.handle({
-    method,
-    path,
-    headers: token ? { authorization: 'Bearer ' + token } : {},
-    body,
-  });
+  const result = await rawCall(method, path, body, token);
   if (result.status >= 400) {
     throw new Error(method + ' ' + path + ' failed: ' + result.status + ' ' + JSON.stringify(result.body));
   }
@@ -67,4 +69,35 @@ const usersB = await call('GET', '/api/platform-users', undefined, loginB.token)
 if (usersA.some(user => user.companyId !== companyA.id)) throw new Error('TENANT LEAK: Company A can read foreign users');
 if (usersB.some(user => user.companyId !== companyB.id)) throw new Error('TENANT LEAK: Company B can read foreign users');
 
-console.log('Tenant isolation test passed:', companyA.id, companyB.id);
+const versionBefore = await call('GET', '/api/state/version', undefined, loginA.token);
+const accessA = await call('POST', '/api/customer/access', { tableName: 'Mesa 01' }, loginA.token);
+if (!accessA.token || !String(accessA.token).startsWith('q.')) throw new Error('Signed QR token was not generated');
+
+const publicTableA = await call('GET', '/api/customer/table/' + encodeURIComponent(accessA.token));
+if (publicTableA.table?.name !== 'Mesa 01') throw new Error('Signed QR did not resolve Company A table');
+
+const activeProductA = stateA.products.find(product => product.active && product.stock > 0);
+if (!activeProductA) throw new Error('Company A has no active product for QR order test');
+
+const customerOrder = await call(
+  'POST',
+  '/api/customer/table/' + encodeURIComponent(accessA.token) + '/orders',
+  { customer: 'Cliente QA', items: [{ productId: activeProductA.id, qty: 1 }] }
+);
+if (customerOrder.companyId !== companyA.id || customerOrder.tableId !== publicTableA.table.id) {
+  throw new Error('Customer order was not bound to the correct company/table');
+}
+
+const versionAfter = await call('GET', '/api/state/version', undefined, loginA.token);
+if (versionBefore.version === versionAfter.version) throw new Error('State version did not change after customer order');
+
+const stateAAfter = await call('GET', '/api/state', undefined, loginA.token);
+const stateBAfter = await call('GET', '/api/state', undefined, loginB.token);
+if (!stateAAfter.orders.some(order => order.id === customerOrder.id)) throw new Error('Company A did not receive its customer order');
+if (stateBAfter.orders.some(order => order.id === customerOrder.id)) throw new Error('TENANT LEAK: Company B received Company A customer order');
+
+const tampered = accessA.token.slice(0, -1) + (accessA.token.endsWith('a') ? 'b' : 'a');
+const tamperedResponse = await rawCall('GET', '/api/customer/table/' + encodeURIComponent(tampered));
+if (tamperedResponse.status !== 401) throw new Error('Tampered QR token was accepted');
+
+console.log('Tenant isolation + signed QR + order routing test passed:', companyA.id, companyB.id);
