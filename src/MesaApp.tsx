@@ -2706,6 +2706,8 @@ function SettingsView(props: ViewProps) {
   const [companyOpen, setCompanyOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CompanyInfo | null>(null);
   const [companyForm, setCompanyForm] = useState({ legalName: '', tradeName: '', document: '', address: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' as CompanyInfo['status'] });
+  const [companyLookupStatus, setCompanyLookupStatus] = useState('');
+  const lastCompanyLookup = useRef('');
   const [settingsQrTable, setSettingsQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
   const [settingsQrLink, setSettingsQrLink] = useState('');
   const [platformUsers, setPlatformUsers] = useState<PlatformUserInfo[]>([]);
@@ -2792,6 +2794,8 @@ function SettingsView(props: ViewProps) {
 
   const openCompany = (company?: CompanyInfo) => {
     setEditingCompany(company || null);
+    lastCompanyLookup.current = company?.document ? String(company.document).toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+    setCompanyLookupStatus('');
     setCompanyForm(company ? {
       legalName: company.legalName || company.name,
       tradeName: company.tradeName || company.name,
@@ -2807,7 +2811,7 @@ function SettingsView(props: ViewProps) {
   };
 
   const saveCompany = async () => {
-    const cnpj = companyForm.document.replace(/\D/g, '');
+    const cnpj = companyForm.document.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!companyForm.legalName.trim() || !companyForm.tradeName.trim() || cnpj.length !== 14 || !companyForm.address.trim() || !companyForm.phone.trim() || !companyForm.email.trim()) {
       alert('Preencha Razão Social, Nome Fantasia, CNPJ, Endereço Completo, Telefone e E-mail.');
       return;
@@ -2824,6 +2828,42 @@ function SettingsView(props: ViewProps) {
     await api.delete('/api/companies/' + company.id);
     await loadCompanies();
   };
+
+  useEffect(() => {
+    if (!companyOpen) return;
+    const cnpj = companyForm.document.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (cnpj.length !== 14 || cnpj === lastCompanyLookup.current) return;
+    const timer = window.setTimeout(async () => {
+      setCompanyLookupStatus('Consultando CNPJ...');
+      try {
+        const response = await api.get<{
+          cnpj: string;
+          legalName: string;
+          tradeName: string;
+          address: string;
+          phone: string;
+          email: string;
+          status: string;
+          source: string;
+        }>('/api/cnpj/' + encodeURIComponent(cnpj));
+        lastCompanyLookup.current = cnpj;
+        const data = response.data;
+        setCompanyForm(current => ({
+          ...current,
+          legalName: data.legalName || current.legalName,
+          tradeName: data.tradeName || current.tradeName,
+          document: data.cnpj || current.document,
+          address: data.address || current.address,
+          phone: data.phone || current.phone,
+          email: data.email || current.email,
+        }));
+        setCompanyLookupStatus(data.status ? 'Dados encontrados · Situação cadastral: ' + data.status : 'Dados cadastrais encontrados.');
+      } catch (err) {
+        setCompanyLookupStatus(err instanceof Error ? err.message : 'CNPJ não encontrado ou consulta indisponível.');
+      }
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [companyOpen, companyForm.document]);
 
   useEffect(() => {
     if (section === 'integrations' || section === 'open-api') {
@@ -3082,7 +3122,7 @@ function SettingsView(props: ViewProps) {
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Razão Social"><input value={companyForm.legalName} onChange={e => setCompanyForm({ ...companyForm, legalName: e.target.value })} className="control" /></Field>
               <Field label="Nome Fantasia"><input value={companyForm.tradeName} onChange={e => setCompanyForm({ ...companyForm, tradeName: e.target.value })} className="control" /></Field>
-              <Field label="CNPJ"><input value={companyForm.document} onChange={e => setCompanyForm({ ...companyForm, document: e.target.value })} placeholder="00.000.000/0000-00" className="control" /></Field>
+              <Field label="CNPJ"><input value={companyForm.document} onChange={e => { lastCompanyLookup.current = ''; setCompanyLookupStatus(''); setCompanyForm({ ...companyForm, document: e.target.value.toUpperCase() }); }} placeholder="00.000.000/0000-00" className="control" />{companyLookupStatus && <small className={'mt-1 block text-[9px] ' + (companyLookupStatus.startsWith('Dados') ? 'text-emerald-600' : companyLookupStatus.startsWith('Consultando') ? 'text-[#159fe5]' : 'text-amber-600')}>{companyLookupStatus}</small>}</Field>
               <Field label="Telefone"><input value={companyForm.phone} onChange={e => setCompanyForm({ ...companyForm, phone: e.target.value })} className="control" /></Field>
               <div className="sm:col-span-2"><Field label="Endereço Completo"><input value={companyForm.address} onChange={e => setCompanyForm({ ...companyForm, address: e.target.value })} placeholder="Rua, número, complemento, bairro, cidade, UF e CEP" className="control" /></Field></div>
               <Field label="E-mail"><input type="email" value={companyForm.email} onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })} className="control" /></Field>
@@ -3185,7 +3225,7 @@ function SettingsView(props: ViewProps) {
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Razão Social"><input value={companyForm.legalName} onChange={e => setCompanyForm({ ...companyForm, legalName: e.target.value })} className="control" /></Field>
               <Field label="Nome Fantasia"><input value={companyForm.tradeName} onChange={e => setCompanyForm({ ...companyForm, tradeName: e.target.value })} className="control" /></Field>
-              <Field label="CNPJ"><input value={companyForm.document} onChange={e => setCompanyForm({ ...companyForm, document: e.target.value })} placeholder="00.000.000/0000-00" className="control" /></Field>
+              <Field label="CNPJ"><input value={companyForm.document} onChange={e => { lastCompanyLookup.current = ''; setCompanyLookupStatus(''); setCompanyForm({ ...companyForm, document: e.target.value.toUpperCase() }); }} placeholder="00.000.000/0000-00" className="control" />{companyLookupStatus && <small className={'mt-1 block text-[9px] ' + (companyLookupStatus.startsWith('Dados') ? 'text-emerald-600' : companyLookupStatus.startsWith('Consultando') ? 'text-[#159fe5]' : 'text-amber-600')}>{companyLookupStatus}</small>}</Field>
               <Field label="Telefone"><input value={companyForm.phone} onChange={e => setCompanyForm({ ...companyForm, phone: e.target.value })} className="control" /></Field>
               <div className="sm:col-span-2"><Field label="Endereço Completo"><input value={companyForm.address} onChange={e => setCompanyForm({ ...companyForm, address: e.target.value })} placeholder="Rua, número, complemento, bairro, cidade, UF e CEP" className="control" /></Field></div>
               <Field label="E-mail"><input type="email" value={companyForm.email} onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })} className="control" /></Field>
