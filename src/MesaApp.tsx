@@ -2641,7 +2641,10 @@ type OpenApiKeyInfo = {
 type CompanyInfo = {
   id: string;
   name: string;
+  legalName?: string;
+  tradeName?: string;
   document?: string;
+  address?: string;
   email?: string;
   phone?: string;
   contactName?: string;
@@ -2702,7 +2705,7 @@ function SettingsView(props: ViewProps) {
   const [companies, setCompanies] = useState<CompanyInfo[]>([]);
   const [companyOpen, setCompanyOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CompanyInfo | null>(null);
-  const [companyForm, setCompanyForm] = useState({ name: '', document: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' as CompanyInfo['status'] });
+  const [companyForm, setCompanyForm] = useState({ legalName: '', tradeName: '', document: '', address: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' as CompanyInfo['status'] });
   const [settingsQrTable, setSettingsQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
   const [settingsQrLink, setSettingsQrLink] = useState('');
   const [platformUsers, setPlatformUsers] = useState<PlatformUserInfo[]>([]);
@@ -2790,21 +2793,28 @@ function SettingsView(props: ViewProps) {
   const openCompany = (company?: CompanyInfo) => {
     setEditingCompany(company || null);
     setCompanyForm(company ? {
-      name: company.name,
+      legalName: company.legalName || company.name,
+      tradeName: company.tradeName || company.name,
       document: company.document || '',
+      address: company.address || '',
       email: company.email || '',
       phone: company.phone || '',
       contactName: company.contactName || '',
       plan: company.plan || '',
       status: company.status,
-    } : { name: '', document: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' });
+    } : { legalName: '', tradeName: '', document: '', address: '', email: '', phone: '', contactName: '', plan: '', status: 'Ativa' });
     setCompanyOpen(true);
   };
 
   const saveCompany = async () => {
-    if (!companyForm.name.trim()) return;
-    if (editingCompany) await api.put('/api/companies/' + editingCompany.id, companyForm);
-    else await api.post('/api/companies', companyForm);
+    const cnpj = companyForm.document.replace(/\D/g, '');
+    if (!companyForm.legalName.trim() || !companyForm.tradeName.trim() || cnpj.length !== 14 || !companyForm.address.trim() || !companyForm.phone.trim() || !companyForm.email.trim()) {
+      alert('Preencha Razão Social, Nome Fantasia, CNPJ, Endereço Completo, Telefone e E-mail.');
+      return;
+    }
+    const payload = { ...companyForm, name: companyForm.tradeName, document: cnpj };
+    if (editingCompany) await api.put('/api/companies/' + editingCompany.id, payload);
+    else await api.post('/api/companies', payload);
     setCompanyOpen(false);
     await loadCompanies();
   };
@@ -3055,7 +3065,7 @@ function SettingsView(props: ViewProps) {
               <tbody>
                 {companies.map(company => (
                   <tr key={company.id} className="border-b border-[#f0eeea] text-[10px]">
-                    <td className="py-3"><b className="block text-xs">{company.name}</b><span className="text-slate-400">{company.document || 'Documento não informado'}</span></td>
+                    <td className="py-3"><b className="block text-xs">{company.tradeName || company.name}</b><span className="block text-slate-400">{company.legalName || company.name}</span><span className="text-slate-400">{company.document || 'CNPJ não informado'}</span></td>
                     <td><b className="block">{company.contactName || 'Responsável não informado'}</b><span className="text-slate-400">{company.email || company.phone || 'Sem contato'}</span></td>
                     <td>{company.plan || 'Padrão'}</td>
                     <td><Badge value={company.status} /></td>
@@ -3070,11 +3080,13 @@ function SettingsView(props: ViewProps) {
         {companyOpen && (
           <Modal title={editingCompany ? 'Editar empresa' : 'Cadastrar empresa'} onClose={() => setCompanyOpen(false)}>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Nome da empresa"><input value={companyForm.name} onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })} className="control" /></Field>
-              <Field label="CNPJ / Documento"><input value={companyForm.document} onChange={e => setCompanyForm({ ...companyForm, document: e.target.value })} className="control" /></Field>
-              <Field label="Responsável"><input value={companyForm.contactName} onChange={e => setCompanyForm({ ...companyForm, contactName: e.target.value })} className="control" /></Field>
-              <Field label="E-mail"><input type="email" value={companyForm.email} onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })} className="control" /></Field>
+              <Field label="Razão Social"><input value={companyForm.legalName} onChange={e => setCompanyForm({ ...companyForm, legalName: e.target.value })} className="control" /></Field>
+              <Field label="Nome Fantasia"><input value={companyForm.tradeName} onChange={e => setCompanyForm({ ...companyForm, tradeName: e.target.value })} className="control" /></Field>
+              <Field label="CNPJ"><input value={companyForm.document} onChange={e => setCompanyForm({ ...companyForm, document: e.target.value })} placeholder="00.000.000/0000-00" className="control" /></Field>
               <Field label="Telefone"><input value={companyForm.phone} onChange={e => setCompanyForm({ ...companyForm, phone: e.target.value })} className="control" /></Field>
+              <div className="sm:col-span-2"><Field label="Endereço Completo"><input value={companyForm.address} onChange={e => setCompanyForm({ ...companyForm, address: e.target.value })} placeholder="Rua, número, complemento, bairro, cidade, UF e CEP" className="control" /></Field></div>
+              <Field label="E-mail"><input type="email" value={companyForm.email} onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })} className="control" /></Field>
+              <Field label="Responsável"><input value={companyForm.contactName} onChange={e => setCompanyForm({ ...companyForm, contactName: e.target.value })} className="control" /></Field>
               <Field label="Plano"><input value={companyForm.plan} onChange={e => setCompanyForm({ ...companyForm, plan: e.target.value })} placeholder="Ex.: Profissional" className="control" /></Field>
               <Field label="Status"><select value={companyForm.status} onChange={e => setCompanyForm({ ...companyForm, status: e.target.value as CompanyInfo['status'] })} className="control"><option>Ativa</option><option>Teste</option><option>Inativa</option></select></Field>
             </div>
@@ -3118,7 +3130,10 @@ function SettingsView(props: ViewProps) {
             <MiniStat label="Ativos" value={String(platformUsers.filter(item => item.status === 'Ativo').length)} />
             <MiniStat label="Empresas" value={String(companies.length)} />
           </div>
-          <button onClick={() => openUser()} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Criar usuário</button>
+          <div className="flex flex-wrap gap-2">
+            {props.session.role === 'Super Admin' && <button onClick={() => openCompany()} className="flex items-center gap-2 rounded-xl border border-[#f45f3f] bg-white px-4 py-3 text-xs font-bold text-[#f45f3f]"><Store size={15} />Criar empresa</button>}
+            <button onClick={() => openUser()} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Criar usuário</button>
+          </div>
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[1.35fr_.65fr]">
@@ -3164,6 +3179,24 @@ function SettingsView(props: ViewProps) {
             </Surface>
           </div>
         </div>
+
+        {companyOpen && (
+          <Modal title={editingCompany ? 'Editar empresa' : 'Cadastrar empresa'} onClose={() => setCompanyOpen(false)}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Razão Social"><input value={companyForm.legalName} onChange={e => setCompanyForm({ ...companyForm, legalName: e.target.value })} className="control" /></Field>
+              <Field label="Nome Fantasia"><input value={companyForm.tradeName} onChange={e => setCompanyForm({ ...companyForm, tradeName: e.target.value })} className="control" /></Field>
+              <Field label="CNPJ"><input value={companyForm.document} onChange={e => setCompanyForm({ ...companyForm, document: e.target.value })} placeholder="00.000.000/0000-00" className="control" /></Field>
+              <Field label="Telefone"><input value={companyForm.phone} onChange={e => setCompanyForm({ ...companyForm, phone: e.target.value })} className="control" /></Field>
+              <div className="sm:col-span-2"><Field label="Endereço Completo"><input value={companyForm.address} onChange={e => setCompanyForm({ ...companyForm, address: e.target.value })} placeholder="Rua, número, complemento, bairro, cidade, UF e CEP" className="control" /></Field></div>
+              <Field label="E-mail"><input type="email" value={companyForm.email} onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })} className="control" /></Field>
+              <Field label="Responsável"><input value={companyForm.contactName} onChange={e => setCompanyForm({ ...companyForm, contactName: e.target.value })} className="control" /></Field>
+              <Field label="Plano"><input value={companyForm.plan} onChange={e => setCompanyForm({ ...companyForm, plan: e.target.value })} placeholder="Ex.: Profissional" className="control" /></Field>
+              <Field label="Status"><select value={companyForm.status} onChange={e => setCompanyForm({ ...companyForm, status: e.target.value as CompanyInfo['status'] })} className="control"><option>Ativa</option><option>Teste</option><option>Inativa</option></select></Field>
+            </div>
+            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Ao salvar, a empresa recebe um tenant próprio. Os usuários criados para ela acessam somente os dados dessa empresa.</div>
+            <div className="mt-5 flex justify-end gap-2"><button onClick={() => setCompanyOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void saveCompany()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar empresa</button></div>
+          </Modal>
+        )}
 
         {userOpen && (
           <Modal title={editingUser ? 'Editar usuário' : 'Criar acesso'} onClose={() => setUserOpen(false)}>
