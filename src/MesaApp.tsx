@@ -1054,6 +1054,28 @@ function TableOrderWorkspace(props: ViewProps) {
   const fee = props.data.settings.automaticServiceFee ? props.subtotal * (props.data.settings.serviceFee / 100) : 0;
   const total = props.subtotal + fee;
   const categoryImage = (name: string) => props.data.menuCategories.find(item => item.name === name)?.imageUrl || categoryPhoto(name);
+  const selectedTable = props.data.tables.find(table => table.name === props.table);
+  const allTableOrders = props.data.orders
+    .filter(order => order.table === props.table && order.status !== 'Cancelado')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const tableOrders = (() => {
+    if (!allTableOrders.length) return [] as Order[];
+    const tableTotal = Number(selectedTable?.total || 0);
+    if (tableTotal <= 0) {
+      return allTableOrders.filter(order => !['Finalizado', 'Cancelado'].includes(order.status));
+    }
+    const currentSession: Order[] = [];
+    let accumulated = 0;
+    for (const order of allTableOrders) {
+      if (accumulated >= tableTotal - 0.01) break;
+      currentSession.push(order);
+      accumulated += Number(order.total || 0);
+    }
+    return currentSession;
+  })();
+
+  const tableHistoryTotal = tableOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
 
   return (
     <div className="space-y-3">
@@ -1085,22 +1107,67 @@ function TableOrderWorkspace(props: ViewProps) {
           </div>
 
           <div className="flex-1 overflow-auto p-4">
-            {props.cart.length === 0 ? <div className="grid h-full min-h-[220px] place-items-center text-center text-xs text-slate-400">Nenhum item lançado nesta mesa.<br />Clique nos produtos ao lado.</div> : props.cart.map(item => (
-              <div key={item.productId} className="mb-2 flex items-center gap-3 rounded-lg border border-[#eef0f1] p-2">
-                <div className="h-10 w-10 overflow-hidden rounded-md bg-[#eeeae4]"><img src={productPhoto(props.data.products.find(product => product.id === item.productId) || { id: item.productId, name: item.name, category: '', price: item.price, stock: 0, active: true })} alt={item.name} className="h-full w-full object-cover natural-photo" /></div>
-                <div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{item.name}</b><small className="text-[10px] text-slate-400">{BRL(item.price)}</small></div>
-                <button onClick={() => props.changeQty(item.productId, -1)} className="grid h-7 w-7 place-items-center rounded border"><Minus size={12} /></button>
-                <b className="text-xs">{item.qty}</b>
-                <button onClick={() => props.changeQty(item.productId, 1)} className="grid h-7 w-7 place-items-center rounded border"><Plus size={12} /></button>
+            {tableOrders.length > 0 && (
+              <div className="mb-4">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2"><History size={14} className="text-[#159fe5]" /><b className="text-[11px]">Histórico da mesa</b></div>
+                  <span className="rounded-full bg-[#eef7fb] px-2 py-1 text-[9px] font-bold text-[#246486]">{tableOrders.length} pedido(s)</span>
+                </div>
+                <div className="space-y-2">
+                  {tableOrders.map(order => (
+                    <div key={order.id} className="rounded-xl border border-[#e7eaec] bg-[#fafbfb] p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <b className="block text-[10px]">{order.code}</b>
+                          <small className="text-[9px] text-slate-400">{new Date(order.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small>
+                        </div>
+                        <div className="text-right">
+                          <Badge value={order.status} />
+                          <b className="mt-1 block text-[10px] text-[#ef5a38]">{BRL(order.total)}</b>
+                        </div>
+                      </div>
+                      <div className="mt-2 border-t border-[#eceeef] pt-2">
+                        {order.items.map((item, index) => (
+                          <div key={order.id + '-' + item.productId + '-' + index} className="flex items-center justify-between gap-2 py-1 text-[10px]">
+                            <span className="min-w-0 flex-1 truncate"><b>{item.qty}x</b> {item.name}</span>
+                            <span className="shrink-0 text-slate-500">{BRL(item.price * item.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {order.paymentMethod && <small className="mt-2 block text-[9px] text-slate-400">Pagamento: {order.paymentMethod}</small>}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
+            )}
+
+            <div className={tableOrders.length ? 'border-t border-dashed border-[#dfe3e5] pt-4' : ''}>
+              <div className="mb-2 flex items-center justify-between">
+                <b className="text-[11px]">Novo lançamento</b>
+                {props.cart.length > 0 && <span className="text-[9px] text-slate-400">Ainda não salvo</span>}
+              </div>
+              {props.cart.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#d9dbe3] px-3 py-5 text-center text-xs text-slate-400">
+                  {tableOrders.length ? 'Nenhum novo item lançado.' : 'Nenhum item lançado nesta mesa.'}<br />Clique nos produtos ao lado.
+                </div>
+              ) : props.cart.map(item => (
+                <div key={item.productId} className="mb-2 flex items-center gap-3 rounded-lg border border-[#eef0f1] p-2">
+                  <div className="h-10 w-10 overflow-hidden rounded-md bg-[#eeeae4]"><img src={productPhoto(props.data.products.find(product => product.id === item.productId) || { id: item.productId, name: item.name, category: '', price: item.price, stock: 0, active: true })} alt={item.name} className="h-full w-full object-cover natural-photo" /></div>
+                  <div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{item.name}</b><small className="text-[10px] text-slate-400">{BRL(item.price)}</small></div>
+                  <button onClick={() => props.changeQty(item.productId, -1)} className="grid h-7 w-7 place-items-center rounded border"><Minus size={12} /></button>
+                  <b className="text-xs">{item.qty}</b>
+                  <button onClick={() => props.changeQty(item.productId, 1)} className="grid h-7 w-7 place-items-center rounded border"><Plus size={12} /></button>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="border-t p-4">
-            <div className="flex justify-between py-1 text-sm"><b>Subtotal</b><b>{BRL(props.subtotal)}</b></div>
+            {tableOrders.length > 0 && <div className="mb-2 flex justify-between border-b pb-2 text-xs text-slate-500"><b>Total já pedido</b><b>{BRL(selectedTable?.total || tableHistoryTotal)}</b></div>}
+            <div className="flex justify-between py-1 text-sm"><b>Novo lançamento</b><b>{BRL(props.subtotal)}</b></div>
             <div className="flex justify-between py-1 text-xs text-emerald-500"><b>Acréscimo automático</b><b>{props.data.settings.automaticServiceFee ? props.data.settings.serviceFee + ' %' : 'Desativado'}</b></div>
-            <div className="mt-2 flex justify-between py-1 text-xl"><b>Total</b><b>{BRL(total)}</b></div>
-            <div className="flex justify-between py-1 text-sm"><b>Restante</b><b>{BRL(total)}</b></div>
+            <div className="mt-2 flex justify-between py-1 text-xl"><b>Total novo</b><b>{BRL(total)}</b></div>
+            <div className="flex justify-between py-1 text-sm"><b>Total da mesa</b><b>{BRL(Number(selectedTable?.total || tableHistoryTotal) + total)}</b></div>
 
             <div className="mt-4 grid grid-cols-5 gap-2">
               <QuickIcon title="Limpar pedido" icon={<Trash2 size={16} />} onClick={() => props.cart.forEach(item => props.changeQty(item.productId, -item.qty))} />
