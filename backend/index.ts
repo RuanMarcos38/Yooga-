@@ -124,6 +124,19 @@ type S = {
   settings: AppSettings;
 };
 
+type CompanyRecord = {
+  id: string;
+  name: string;
+  document?: string;
+  email?: string;
+  phone?: string;
+  contactName?: string;
+  plan?: string;
+  status: 'Ativa' | 'Inativa' | 'Teste';
+  createdAt: string;
+  updatedAt: string;
+};
+
 const tableStatusValues: T['status'][] = ['Livre', 'Ocupada', 'Aguardando', 'Fechamento'];
 
 const defaultSettings = (): AppSettings => ({
@@ -738,7 +751,7 @@ export const handler = router({
     message: 'Success',
     service: 'TAPFOOD Backend',
     version: '2026.09.20',
-    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
+    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
   })],
 
   'POST /api/auth/login': [async ({ body }) => {
@@ -770,6 +783,68 @@ export const handler = router({
       role: 'Administrador',
       email: adminEmail,
     }));
+  }],
+
+  'GET /api/companies': [async () => {
+    const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+    return json(result.items.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+  }],
+
+  'POST /api/companies': [async ({ body }) => {
+    const value = body as Partial<CompanyRecord>;
+    const name = String(value.name || '').trim();
+    const email = String(value.email || '').trim().toLowerCase();
+    const phone = String(value.phone || '').replace(/\D/g, '');
+    if (!name) return error('Nome da empresa é obrigatório', 400);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+    if (phone && (phone.length < 10 || phone.length > 13)) return error('Telefone inválido', 400);
+    const now = new Date().toISOString();
+    const ids = await db.add('tapfood_companies', [{
+      name: name.slice(0, 160),
+      document: String(value.document || '').trim().slice(0, 30),
+      email: email.slice(0, 160),
+      phone,
+      contactName: String(value.contactName || '').trim().slice(0, 120),
+      plan: String(value.plan || '').trim().slice(0, 80),
+      status: ['Ativa', 'Inativa', 'Teste'].includes(String(value.status)) ? value.status : 'Ativa',
+      createdAt: now,
+      updatedAt: now,
+    }]);
+    const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+    const created = result.items.find(item => item.id === ids[0]);
+    return json(created, 201);
+  }],
+
+  'PUT /api/companies/:id': [async ({ params, body }) => {
+    const value = body as Partial<CompanyRecord>;
+    const result = await db.list<CompanyRecord>('tapfood_companies', { limit: 500 });
+    const current = result.items.find(item => item.id === params.id);
+    if (!current) return error('Empresa não encontrada', 404);
+    const name = String(value.name ?? current.name).trim();
+    const email = String(value.email ?? current.email ?? '').trim().toLowerCase();
+    const phone = String(value.phone ?? current.phone ?? '').replace(/\D/g, '');
+    if (!name) return error('Nome da empresa é obrigatório', 400);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('E-mail inválido', 400);
+    if (phone && (phone.length < 10 || phone.length > 13)) return error('Telefone inválido', 400);
+    const next: Omit<CompanyRecord, 'id'> = {
+      name: name.slice(0, 160),
+      document: String(value.document ?? current.document ?? '').trim().slice(0, 30),
+      email: email.slice(0, 160),
+      phone,
+      contactName: String(value.contactName ?? current.contactName ?? '').trim().slice(0, 120),
+      plan: String(value.plan ?? current.plan ?? '').trim().slice(0, 80),
+      status: ['Ativa', 'Inativa', 'Teste'].includes(String(value.status ?? current.status)) ? (value.status ?? current.status) as CompanyRecord['status'] : current.status,
+      createdAt: current.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.update('tapfood_companies', [{ id: params.id, record: next }]);
+    return json({ id: params.id, ...next });
+  }],
+
+  'DELETE /api/companies/:id': [async ({ params }) => {
+    const [deleted] = await db.delete('tapfood_companies', [params.id]);
+    if (!deleted) return error('Empresa não encontrada', 404);
+    return json({ success: true });
   }],
 
   'GET /api/integrations': [async () => json(await listIntegrationConfigs())],
