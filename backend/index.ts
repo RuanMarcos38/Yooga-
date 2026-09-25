@@ -2036,6 +2036,45 @@ export const handler = router({
     return json(customer, 201);
   }],
 
+  'POST /api/customer/table/:code/payment': [async ({ params, body }) => {
+    if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
+    const value = body as { method?: 'Pix' | 'Cartão' | 'Dinheiro' };
+    const method = value.method;
+    if (!method || !['Pix', 'Cartão', 'Dinheiro'].includes(method)) return error('Forma de pagamento inválida', 400);
+    const tenantId = customerTenantFromCode(params.code);
+    const unitId = customerUnitFromCode(params.code);
+    const current = await get(tenantId, unitId);
+    const table = tableFromCode(current.state, params.code);
+    if (!table) return error('Mesa não encontrada', 404);
+
+    const allowed =
+      (method === 'Pix' && current.state.settings.pixEnabled) ||
+      (method === 'Cartão' && current.state.settings.cardEnabled) ||
+      (method === 'Dinheiro' && current.state.settings.cashEnabled);
+    if (!allowed) return error('Forma de pagamento indisponível neste estabelecimento', 400);
+
+    current.state.orders
+      .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      .forEach(order => { order.paymentMethod = method; order.updatedAt = new Date().toISOString(); });
+
+    let request = current.state.serviceRequests.find(item => item.table === table.name && item.type === 'bill' && item.status === 'pending');
+    if (!request) {
+      request = {
+        id: 'sr' + Date.now(),
+        table: table.name,
+        type: 'bill',
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+      current.state.serviceRequests.unshift(request);
+    }
+
+    audit(current.state, 'table', table.id, 'Pagamento solicitado pelo cliente', method + ' · ' + table.name, 'Cliente');
+    await save(current.id, current.state, tenantId, unitId);
+    await notifyN8n(current.state, 'table.payment_requested', { request, table, paymentMethod: method }, tenantId, unitId);
+    return json({ request, paymentMethod: method, table: table.name }, 201);
+  }],
+
   'POST /api/customer/table/:code/request': [async ({ params, body }) => {
     if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
     const value = body as { type?: 'waiter' | 'bill' };
