@@ -161,5 +161,24 @@
       "Voltar ao hub e repetir"
     ],
     "expected": "Nenhum card principal fica sem resposta e a estrutura visual permanece inalterada."
+  },
+  {
+    "name": "Upload rápido de foto na tela Produtos",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "Produtos > Upload de foto disponível",
+      "POST /api/products/:id/image",
+      "compressImage"
+    ],
+    "description": "Valida que o indicador de upload da tela Produtos é clicável e utiliza o fluxo real de imagem já existente.",
+    "steps": [
+      "Abrir Produtos",
+      "Clicar em Upload de foto disponível",
+      "Selecionar um produto",
+      "Escolher JPG, PNG ou WebP",
+      "Enviar foto"
+    ],
+    "expected": "A foto é otimizada, enviada ao backend e passa a aparecer no produto sem alterar os demais dados."
   }
 ]
