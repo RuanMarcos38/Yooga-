@@ -23,8 +23,24 @@ const master = await call('POST', '/api/auth/login', {
 if (!master?.token || master.role !== 'Super Admin') throw new Error('Master login failed');
 
 const suffix = Date.now().toString(36);
-const companyA = await call('POST', '/api/companies', { name: 'Tenant QA A ' + suffix, status: 'Ativa' }, master.token);
-const companyB = await call('POST', '/api/companies', { name: 'Tenant QA B ' + suffix, status: 'Ativa' }, master.token);
+const companyA = await call('POST', '/api/companies', {
+  legalName: 'Tenant QA A LTDA ' + suffix,
+  tradeName: 'Tenant QA A ' + suffix,
+  document: ('10000000000000' + String(Date.now()).slice(-6)).slice(-14),
+  address: 'Rua QA A, 100, Centro, Joinville - SC, 89200-000',
+  phone: '47999990001',
+  email: 'empresa-a-' + suffix + '@tapfood.local',
+  status: 'Ativa',
+}, master.token);
+const companyB = await call('POST', '/api/companies', {
+  legalName: 'Tenant QA B LTDA ' + suffix,
+  tradeName: 'Tenant QA B ' + suffix,
+  document: ('20000000000000' + String(Date.now()).slice(-6)).slice(-14),
+  address: 'Rua QA B, 200, Centro, Joinville - SC, 89200-000',
+  phone: '47999990002',
+  email: 'empresa-b-' + suffix + '@tapfood.local',
+  status: 'Ativa',
+}, master.token);
 
 const password = 'TenantQA@2026';
 const userAEmail = 'qa-a-' + suffix + '@tapfood.local';
@@ -41,6 +57,7 @@ const loginA = await call('POST', '/api/auth/login', { mode: 'empresa', email: u
 const loginB = await call('POST', '/api/auth/login', { mode: 'empresa', email: userBEmail, password });
 
 if (loginA.companyId !== companyA.id || loginB.companyId !== companyB.id) throw new Error('Company binding failed');
+if (!companyA.legalName || !companyA.tradeName || !companyA.address || !companyA.document) throw new Error('Full company profile was not persisted');
 
 const uniqueProduct = 'Produto Privado A ' + suffix;
 await call('POST', '/api/products', {
