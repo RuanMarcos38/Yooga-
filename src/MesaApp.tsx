@@ -135,7 +135,7 @@ type State = {
   settings: AppSettings;
 };
 type Page = 'dashboard' | 'pdv' | 'tables' | 'history' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
-type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string; token: string; expiresAt: string };
+type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string; unitId?: string; unitName?: string; token: string; expiresAt: string };
 
 const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ACCENT = '#f45f3f';
@@ -598,7 +598,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           <button title="Ver solicitações das mesas" onClick={() => setPage('tables')} className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
           <button onClick={onLogout} className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('') || 'TF'}</span>
-            <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">{session.companyName || 'TAPFOOD'} · {session.role} · {data.settings.unit}</small></span>
+            <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">{session.companyName || 'TAPFOOD'} · {session.role} · {session.unitName || data.settings.unit}</small></span>
             <LogOut size={14} className="text-slate-400" />
           </button>
         </header>
@@ -2654,10 +2654,24 @@ type CompanyInfo = {
   updatedAt: string;
 };
 
+type UnitInfo = {
+  id: string;
+  companyId: string;
+  name: string;
+  address: string;
+  phone?: string;
+  email?: string;
+  status: 'Ativa' | 'Inativa';
+  createdAt: string;
+  updatedAt: string;
+};
+
 type PlatformUserInfo = {
   id: string;
   companyId: string;
   companyName?: string;
+  unitId?: string;
+  unitName?: string;
   name: string;
   email: string;
   role: 'Administrador' | 'Gestor' | 'Operador';
@@ -2710,11 +2724,16 @@ function SettingsView(props: ViewProps) {
   const lastCompanyLookup = useRef('');
   const [settingsQrTable, setSettingsQrTable] = useState(props.data.tables[0]?.name || 'Mesa 01');
   const [settingsQrLink, setSettingsQrLink] = useState('');
+  const [units, setUnits] = useState<UnitInfo[]>([]);
+  const [unitOpen, setUnitOpen] = useState(false);
+  const [editingUnit, setEditingUnit] = useState<UnitInfo | null>(null);
+  const [unitForm, setUnitForm] = useState({ companyId: '', name: '', address: '', phone: '', email: '', status: 'Ativa' as UnitInfo['status'] });
   const [platformUsers, setPlatformUsers] = useState<PlatformUserInfo[]>([]);
   const [userOpen, setUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<PlatformUserInfo | null>(null);
   const [userForm, setUserForm] = useState({
     companyId: '',
+    unitId: '',
     name: '',
     email: '',
     password: '',
@@ -2748,6 +2767,36 @@ function SettingsView(props: ViewProps) {
     setCompanies(response.data as CompanyInfo[]);
   };
 
+  const loadUnits = async () => {
+    const response = await api.get('/api/units');
+    setUnits(response.data as UnitInfo[]);
+  };
+
+  const openUnit = (unit?: UnitInfo, companyId?: string) => {
+    setEditingUnit(unit || null);
+    const resolvedCompanyId = unit?.companyId || companyId || (props.session.role === 'Super Admin' ? companies[0]?.id || '' : props.session.companyId || '');
+    setUnitForm(unit ? {
+      companyId: unit.companyId,
+      name: unit.name,
+      address: unit.address,
+      phone: unit.phone || '',
+      email: unit.email || '',
+      status: unit.status,
+    } : { companyId: resolvedCompanyId, name: '', address: '', phone: '', email: '', status: 'Ativa' });
+    setUnitOpen(true);
+  };
+
+  const saveUnit = async () => {
+    if (!unitForm.companyId || !unitForm.name.trim() || !unitForm.address.trim()) {
+      alert('Informe empresa, nome e endereço da unidade.');
+      return;
+    }
+    if (editingUnit) await api.put('/api/units/' + editingUnit.id, unitForm);
+    else await api.post('/api/units', unitForm);
+    setUnitOpen(false);
+    await loadUnits();
+  };
+
   const loadPlatformUsers = async () => {
     const response = await api.get('/api/platform-users');
     setPlatformUsers(response.data as PlatformUserInfo[]);
@@ -2755,15 +2804,19 @@ function SettingsView(props: ViewProps) {
 
   const openUser = (user?: PlatformUserInfo, companyId?: string) => {
     setEditingUser(user || null);
+    const resolvedCompanyId = user?.companyId || companyId || companies[0]?.id || props.session.companyId || '';
+    const availableUnits = units.filter(unit => unit.companyId === resolvedCompanyId && unit.status === 'Ativa');
     setUserForm(user ? {
       companyId: user.companyId,
+      unitId: user.unitId || availableUnits[0]?.id || '',
       name: user.name,
       email: user.email,
       password: '',
       role: user.role,
       status: user.status,
     } : {
-      companyId: companyId || companies[0]?.id || '',
+      companyId: resolvedCompanyId,
+      unitId: availableUnits[0]?.id || '',
       name: '',
       email: '',
       password: '',
@@ -2774,7 +2827,10 @@ function SettingsView(props: ViewProps) {
   };
 
   const savePlatformUser = async () => {
-    if (!userForm.companyId || !userForm.name.trim() || !userForm.email.trim()) return;
+    if (!userForm.companyId || !userForm.unitId || !userForm.name.trim() || !userForm.email.trim()) {
+      alert('Selecione a empresa e a unidade e preencha nome e e-mail.');
+      return;
+    }
     if (!editingUser && userForm.password.length < 6) {
       alert('Informe uma senha com pelo menos 6 caracteres.');
       return;
@@ -2876,6 +2932,7 @@ function SettingsView(props: ViewProps) {
       void loadCompanies().catch(() => setIntegrationMessage('Não foi possível carregar as empresas.'));
     }
     if (section === 'access') {
+      void loadUnits().catch(() => setIntegrationMessage('Não foi possível carregar as unidades.'));
       void loadPlatformUsers().catch(() => setIntegrationMessage('Não foi possível carregar os usuários.'));
     }
   }, [section]);
@@ -3117,6 +3174,21 @@ function SettingsView(props: ViewProps) {
             {companies.length === 0 && <div className="py-8 text-center text-xs text-slate-400">Nenhuma empresa cadastrada.</div>}
           </div>
         </Surface>
+        {unitOpen && (
+          <Modal title={editingUnit ? 'Editar unidade' : 'Cadastrar unidade'} onClose={() => setUnitOpen(false)}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {props.session.role === 'Super Admin' && <Field label="Empresa"><select value={unitForm.companyId} onChange={e => setUnitForm({ ...unitForm, companyId: e.target.value })} className="control"><option value="">Selecione</option>{companies.filter(company => company.status !== 'Inativa').map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>}
+              <Field label="Nome da unidade"><input value={unitForm.name} onChange={e => setUnitForm({ ...unitForm, name: e.target.value })} placeholder="Ex.: Joinville Centro" className="control" /></Field>
+              <div className="sm:col-span-2"><Field label="Endereço da unidade"><input value={unitForm.address} onChange={e => setUnitForm({ ...unitForm, address: e.target.value })} placeholder="Rua, número, bairro, cidade, UF e CEP" className="control" /></Field></div>
+              <Field label="Telefone"><input value={unitForm.phone} onChange={e => setUnitForm({ ...unitForm, phone: e.target.value })} className="control" /></Field>
+              <Field label="E-mail"><input type="email" value={unitForm.email} onChange={e => setUnitForm({ ...unitForm, email: e.target.value })} className="control" /></Field>
+              <Field label="Status"><select value={unitForm.status} onChange={e => setUnitForm({ ...unitForm, status: e.target.value as UnitInfo['status'] })} className="control"><option>Ativa</option><option>Inativa</option></select></Field>
+            </div>
+            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Esta unidade terá mesas, QR Codes, pedidos, caixa, estoque, integrações e operação isolados das outras unidades da mesma empresa.</div>
+            <div className="mt-5 flex justify-end gap-2"><button onClick={() => setUnitOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void saveUnit()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar unidade</button></div>
+          </Modal>
+        )}
+
         {companyOpen && (
           <Modal title={editingCompany ? 'Editar empresa' : 'Cadastrar empresa'} onClose={() => setCompanyOpen(false)}>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -3168,10 +3240,11 @@ function SettingsView(props: ViewProps) {
           <div className="grid grid-cols-3 gap-2">
             <MiniStat label="Usuários" value={String(platformUsers.length)} />
             <MiniStat label="Ativos" value={String(platformUsers.filter(item => item.status === 'Ativo').length)} />
-            <MiniStat label="Empresas" value={String(companies.length)} />
+            <MiniStat label="Unidades" value={String(units.length)} />
           </div>
           <div className="flex flex-wrap gap-2">
             {props.session.role === 'Super Admin' && <button onClick={() => openCompany()} className="flex items-center gap-2 rounded-xl border border-[#f45f3f] bg-white px-4 py-3 text-xs font-bold text-[#f45f3f]"><Store size={15} />Criar empresa</button>}
+            {(props.session.role === 'Super Admin' || props.session.role === 'Administrador') && <button onClick={() => openUnit()} className="flex items-center gap-2 rounded-xl border border-[#159fe5] bg-white px-4 py-3 text-xs font-bold text-[#159fe5]"><MapPin size={15} />Criar unidade</button>}
             <button onClick={() => openUser()} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Criar usuário</button>
           </div>
         </div>
@@ -3181,12 +3254,13 @@ function SettingsView(props: ViewProps) {
             <SectionHead title="Usuários da plataforma" subtitle="Cada usuário entra com seu próprio e-mail e senha." />
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-left">
-                <thead><tr className="border-b text-[9px] uppercase text-slate-400"><th className="py-3">Usuário</th><th>Empresa</th><th>Perfil</th><th>Status</th><th className="text-right">Ações</th></tr></thead>
+                <thead><tr className="border-b text-[9px] uppercase text-slate-400"><th className="py-3">Usuário</th><th>Empresa</th><th>Unidade</th><th>Perfil</th><th>Status</th><th className="text-right">Ações</th></tr></thead>
                 <tbody>
                   {platformUsers.map(user => (
                     <tr key={user.id} className="border-b border-[#f0eeea] text-[10px]">
                       <td className="py-3"><b className="block text-xs">{user.name}</b><span className="text-slate-400">{user.email}</span></td>
                       <td>{user.companyName || companies.find(company => company.id === user.companyId)?.name || '—'}</td>
+                      <td>{user.unitName || units.find(unit => unit.id === user.unitId)?.name || 'Unidade Principal'}</td>
                       <td>{user.role}</td>
                       <td><Badge value={user.status} /></td>
                       <td><div className="flex justify-end gap-2"><button onClick={() => openUser(user)} className="rounded-lg border px-3 py-2 font-semibold">Editar</button><button onClick={() => void deletePlatformUser(user)} className="rounded-lg border border-red-100 px-3 py-2 font-semibold text-red-500">Excluir</button></div></td>
@@ -3198,10 +3272,25 @@ function SettingsView(props: ViewProps) {
             </div>
           </Surface>
 
+          <Surface>
+            <SectionHead title="Unidades / Filiais" subtitle="Cada unidade possui operação, mesas, caixa e QR próprios." />
+            <div className="space-y-2">
+              {units.map(unit => (
+                <div key={unit.id} className="flex items-center gap-3 rounded-xl border border-[#ebe7e2] bg-white p-3">
+                  <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#eef8fd] text-[#159fe5]"><MapPin size={16} /></span>
+                  <span className="min-w-0 flex-1"><b className="block truncate text-xs">{unit.name}</b><small className="block truncate text-[9px] text-slate-400">{companies.find(company => company.id === unit.companyId)?.name || props.session.companyName || 'Empresa'} · {unit.address}</small></span>
+                  <Badge value={unit.status} />
+                  {(props.session.role === 'Super Admin' || props.session.role === 'Administrador') && <button onClick={() => openUnit(unit)} className="rounded-lg border px-3 py-2 text-[9px] font-semibold">Editar</button>}
+                </div>
+              ))}
+              {units.length === 0 && <div className="py-6 text-center text-xs text-slate-400">Nenhuma unidade cadastrada.</div>}
+            </div>
+          </Surface>
+
           <div className="space-y-4">
             <Surface>
               <SectionHead title="Sessão atual" subtitle="Identidade usada nos registros de auditoria" />
-              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · {props.session.role === 'Super Admin' ? 'Perfil Master' : props.session.role} · {props.session.companyName || 'TAPFOOD'}</small></span><Badge value="Ativo" /></DataRow>
+              <DataRow><UserCog size={17} className="text-[#159fe5]" /><span className="flex-1"><b className="block text-xs">{props.session.name}</b><small className="text-[10px] text-slate-400">{props.session.email || 'admin@tapfood.com.br'} · {props.session.role === 'Super Admin' ? 'Perfil Master' : props.session.role} · {props.session.companyName || 'TAPFOOD'} · {props.session.unitName || props.data.settings.unit}</small></span><Badge value="Ativo" /></DataRow>
               <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] leading-4 text-emerald-700">Pedidos, caixa, mesas, cadastros e demais ações auditadas passam a registrar o nome do usuário autenticado.</div>
               <button onClick={props.onLogout} className="mt-3 w-fit rounded-xl bg-[#202538] px-4 py-3 text-[10px] font-bold text-white">Sair da empresa</button>
             </Surface>
@@ -3241,7 +3330,8 @@ function SettingsView(props: ViewProps) {
         {userOpen && (
           <Modal title={editingUser ? 'Editar usuário' : 'Criar acesso'} onClose={() => setUserOpen(false)}>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Empresa"><select value={userForm.companyId} onChange={e => setUserForm({ ...userForm, companyId: e.target.value })} className="control"><option value="">Selecione</option>{companies.filter(company => company.status !== 'Inativa').map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>
+              <Field label="Empresa"><select value={userForm.companyId} onChange={e => { const companyId = e.target.value; const unitId = units.find(unit => unit.companyId === companyId && unit.status === 'Ativa')?.id || ''; setUserForm({ ...userForm, companyId, unitId }); }} className="control"><option value="">Selecione</option>{companies.filter(company => company.status !== 'Inativa').map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>
+              <Field label="Unidade"><select value={userForm.unitId} onChange={e => setUserForm({ ...userForm, unitId: e.target.value })} className="control"><option value="">Selecione</option>{units.filter(unit => unit.companyId === userForm.companyId && unit.status === 'Ativa').map(unit => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></Field>
               <Field label="Nome do usuário"><input value={userForm.name} onChange={e => setUserForm({ ...userForm, name: e.target.value })} className="control" /></Field>
               <Field label="E-mail de acesso"><input type="email" value={userForm.email} onChange={e => setUserForm({ ...userForm, email: e.target.value })} className="control" /></Field>
               <Field label={editingUser ? 'Nova senha (opcional)' : 'Senha'}><input type="password" value={userForm.password} onChange={e => setUserForm({ ...userForm, password: e.target.value })} className="control" placeholder={editingUser ? 'Deixe em branco para manter' : 'Mínimo 6 caracteres'} /></Field>
