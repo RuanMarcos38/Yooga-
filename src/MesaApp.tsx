@@ -141,7 +141,10 @@ const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', curren
 const ACCENT = '#f45f3f';
 const AUTH_STORAGE_KEY = 'tapfood-auth-session';
 
-const tenantCustomerCode = (tableName: string, companyId?: string) => companyId ? companyId + '~' + tableName : tableName;
+async function signedCustomerLink(tableName: string) {
+  const response = await api.post<{ token: string; tableId: string; tableName: string; companyId: string }>('/api/customer/access', { tableName });
+  return window.location.origin + '/?cliente=' + encodeURIComponent(response.data.token);
+}
 
 const nav: Array<[Page, string, typeof LayoutDashboard]> = [
   ['dashboard', 'Dashboard', LayoutDashboard],
@@ -403,6 +406,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
   const [favorites, setFavorites] = useState<string[]>([]);
   const [settingsForm, setSettingsForm] = useState<AppSettings>(defaultSettings);
   const seededCart = useRef(false);
+  const lastStateVersion = useRef('');
 
   const setPage = (nextPage: Page) => {
     setPageState(nextPage);
@@ -443,14 +447,27 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
   useEffect(() => {
-    const timer = window.setInterval(async () => {
+    let busy = false;
+    const sync = async () => {
+      if (busy) return;
+      busy = true;
       try {
-        const response = await api.get('/api/state');
-        setData(response.data as State);
+        const versionResponse = await api.get<{ version: string }>('/api/state/version');
+        const version = versionResponse.data.version;
+        if (!lastStateVersion.current || lastStateVersion.current !== version) {
+          const response = await api.get('/api/state');
+          setData(response.data as State);
+          setSettingsForm((response.data as State).settings);
+          lastStateVersion.current = version;
+        }
       } catch {
         // Keep the last valid operational snapshot if a background refresh fails.
+      } finally {
+        busy = false;
       }
-    }, 5000);
+    };
+    void sync();
+    const timer = window.setInterval(() => void sync(), 2000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -1048,13 +1065,12 @@ function TableOrderWorkspace(props: ViewProps) {
         </label>
         <button onClick={() => props.setPage('history')} className="grid h-11 w-11 place-items-center rounded-full text-[#535c60] hover:bg-white"><History size={20} /></button>
         <button onClick={async () => {
-          const code = tenantCustomerCode(props.table, props.session.companyId);
-          const link = window.location.origin + '/?cliente=' + encodeURIComponent(code);
           try {
+            const link = await signedCustomerLink(props.table);
             await navigator.clipboard.writeText(link);
-            alert('Link do cliente copiado: ' + link);
-          } catch {
-            window.prompt('Copie o link do cliente:', link);
+            alert('Link seguro do cliente copiado: ' + link);
+          } catch (err) {
+            alert(err instanceof Error ? err.message : 'Não foi possível gerar o acesso do cliente.');
           }
         }} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#246486]">Conectar cliente</button>
       </div>
@@ -2083,19 +2099,22 @@ function TablesView(props: ViewProps) {
   };
 
   const copyCustomerLink = async (tableName: string) => {
-    const code = tenantCustomerCode(tableName, props.session.companyId);
-    const link = window.location.origin + '/?cliente=' + encodeURIComponent(code);
     try {
+      const link = await signedCustomerLink(tableName);
       await navigator.clipboard.writeText(link);
-      alert('Link do cliente copiado: ' + link);
-    } catch {
-      window.prompt('Copie o link do cliente:', link);
+      alert('Link seguro do cliente copiado: ' + link);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Não foi possível gerar o acesso do cliente.');
     }
   };
 
   const callWaiter = async (tableName: string) => {
-    const code = tableName.toUpperCase().replace(/\s+/g, '-');
-    await props.run(() => api.post('/api/customer/table/' + encodeURIComponent(code) + '/request', { type: 'waiter' }), 'Garçom chamado para ' + tableName + '.');
+    await props.run(async () => {
+      const link = await signedCustomerLink(tableName);
+      const token = new URL(link).searchParams.get('cliente');
+      if (!token) throw new Error('Acesso seguro da mesa não gerado.');
+      return api.post('/api/customer/table/' + encodeURIComponent(token) + '/request', { type: 'waiter' });
+    }, 'Garçom chamado para ' + tableName + '.');
   };
 
   return (
