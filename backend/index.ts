@@ -483,6 +483,12 @@ function customerTableId(code: string) {
   return verifyCustomerAccess(code)?.tableId;
 }
 
+function invalidCustomerAccessCode(code: string) {
+  const decoded = decodeURIComponent(code);
+  if (decoded.startsWith('q.')) return !verifyCustomerAccess(code);
+  return decoded.includes('~');
+}
+
 async function get(tenantId = currentTenantId()) {
   const collection = tenantCollection('mesa_state', tenantId);
   const result = await db.list<S>(collection, { limit: 1 });
@@ -950,7 +956,7 @@ export const handler = router({
 
     if (value.mode === 'cliente') {
       const tableCode = value.table || 'Mesa 01';
-      if (decodeURIComponent(tableCode).startsWith('q.') && !verifyCustomerAccess(tableCode)) return error('QR Code inválido', 401);
+      if (invalidCustomerAccessCode(tableCode)) return error('QR Code inválido', 401);
       const tenantId = customerTenantFromCode(tableCode);
       const current = await get(tenantId);
       const table = tableFromCode(current.state, tableCode);
@@ -1673,7 +1679,7 @@ export const handler = router({
   'GET /api/state': [async () => json(await withSignedImages((await get()).state))],
 
   'GET /api/customer/table/:code': [async ({ params }) => {
-    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
+    if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
     const tenantId = customerTenantFromCode(params.code);
     const current = await get(tenantId);
     const table = tableFromCode(current.state, params.code);
@@ -1724,7 +1730,7 @@ export const handler = router({
   }],
 
   'POST /api/customer/table/:code/orders': [async ({ params, body }) => {
-    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
+    if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
     const value = body as { customer?: string; items?: Array<Partial<I>> };
     if (!value.items?.length) return error('Pedido sem itens', 400);
     const tenantId = customerTenantFromCode(params.code);
@@ -1770,7 +1776,7 @@ export const handler = router({
   }],
 
   'POST /api/customer/table/:code/register': [async ({ params, body }) => {
-    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
+    if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
     const value = body as Partial<C>;
     if (!value.name?.trim() || !value.phone?.trim()) return error('Nome e telefone obrigatórios', 400);
     const normalizedPhone = value.phone.replace(/\D/g, '');
@@ -1811,7 +1817,7 @@ export const handler = router({
   }],
 
   'POST /api/customer/table/:code/request': [async ({ params, body }) => {
-    if (decodeURIComponent(params.code).startsWith('q.') && !verifyCustomerAccess(params.code)) return error('QR Code inválido', 401);
+    if (invalidCustomerAccessCode(params.code)) return error('QR Code inválido', 401);
     const value = body as { type?: 'waiter' | 'bill' };
     if (!value.type || !['waiter', 'bill'].includes(value.type)) return error('Solicitação inválida', 400);
     const tenantId = customerTenantFromCode(params.code);
