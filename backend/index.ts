@@ -1734,7 +1734,7 @@ export const handler = router({
     request.status = 'resolved';
     request.resolvedAt = new Date().toISOString();
     audit(current.state, 'table', request.table, 'Solicitação atendida', (request.type === 'bill' ? 'Conta' : 'Garçom') + ' · ' + request.table);
-    await save(current.id, current.state, tenantId);
+    await save(current.id, current.state);
     await notifyN8n(current.state, 'table.request_resolved', { request });
     return json(request);
   }],
@@ -1751,7 +1751,7 @@ export const handler = router({
       openedAt: new Date().toISOString(),
     };
     audit(current.state, 'cash', 'cash', 'Caixa aberto', 'Valor de abertura ' + openingAmount.toFixed(2));
-    await save(current.id, current.state, tenantId);
+    await save(current.id, current.state);
     return json(current.state.cashRegister);
   }],
 
@@ -1778,7 +1778,7 @@ export const handler = router({
       closingAmount,
     };
     audit(current.state, 'cash', 'cash', 'Caixa fechado', 'Saldo de fechamento ' + closingAmount.toFixed(2));
-    await save(current.id, current.state, tenantId);
+    await save(current.id, current.state);
     return json(current.state.cashRegister);
   }],
 
