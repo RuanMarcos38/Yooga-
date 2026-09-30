@@ -800,6 +800,31 @@ const integrationRules: Record<string, { required?: string[]; credentialVariable
   'open-api': { native: true },
 };
 
+const placeholderFieldValues: Record<string, Record<string, RegExp[]>> = {
+  'google-analytics': {
+    measurementId: [
+      /^G-ABC1234567$/i,
+      /^G-X+$/i,
+      /^G-EXAMPLE/i,
+      /^G-TEST/i,
+    ],
+  },
+  'google-tag-manager': {
+    containerId: [
+      /^GTM-X+$/i,
+      /^GTM-EXAMPLE/i,
+      /^GTM-TEST/i,
+    ],
+  },
+  'facebook-pixel': {
+    pixelId: [
+      /^0+$/,
+      /^1{8,25}$/,
+      /^1234567890*$/,
+    ],
+  },
+};
+
 const sanitizeIntegrationFields = (raw: unknown) => {
   const input = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const output: Record<string, string> = {};
@@ -809,6 +834,20 @@ const sanitizeIntegrationFields = (raw: unknown) => {
   }
   return output;
 };
+
+function placeholderFieldsFor(providerId: string, fields: Record<string, string>) {
+  const providerRules = placeholderFieldValues[providerId] || {};
+  return Object.entries(providerRules)
+    .filter(([key, patterns]) => patterns.some(pattern => pattern.test((fields[key] || '').trim())))
+    .map(([key]) => key);
+}
+
+function integrationStatusFromValidation(result: IntegrationValidationResult) {
+  if (result.state === 'active') return 'Ativo';
+  if (result.state === 'credentials') return 'Aguardando credenciais';
+  if (result.state === 'invalid') return 'Erro';
+  return 'Configurado';
+}
 
 async function listIntegrationConfigs(tenantId = currentTenantId(), unitId = currentUnitId()) {
   const result = await db.list<IntegrationConfig>(tenantCollection('mesa_integrations', tenantId, unitId), { limit: 50 });
@@ -837,6 +876,18 @@ async function listIntegrationConfigs(tenantId = currentTenantId(), unitId = cur
         fields: {},
         updatedAt: current.state.cashRegister.openedAt,
         message: 'Totem nativo ativo pela configuração operacional do estabelecimento.',
+      };
+    }
+
+    if (item && item.enabled !== false) {
+      const validation = validateIntegration(providerId, item.fields || {});
+      return {
+        id: providerId,
+        enabled: validation.state === 'active',
+        status: integrationStatusFromValidation(validation),
+        fields: item.fields ?? {},
+        updatedAt: item.updatedAt,
+        message: validation.message,
       };
     }
 
@@ -904,6 +955,14 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
 
   const missing = (rule.required || []).filter(key => !isConfigured(fields[key]));
   if (missing.length) return { state: 'invalid', message: 'Campos obrigatórios pendentes: ' + missing.join(', ') + '.' };
+
+  const placeholders = placeholderFieldsFor(providerId, fields);
+  if (placeholders.length) {
+    return {
+      state: 'invalid',
+      message: 'Campos com valor de exemplo detectados: ' + placeholders.join(', ') + '. Substitua por credenciais reais de produção.',
+    };
+  }
 
   if (providerId === 'n8n') {
     return /^https?:\/\/.+/i.test(fields.webhookUrl || '')
