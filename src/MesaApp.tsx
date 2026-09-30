@@ -3523,6 +3523,22 @@ function SettingsView(props: ViewProps) {
     }
   };
 
+  const deactivateIntegration = async () => {
+    if (!selectedIntegration) return;
+    setIntegrationBusy(true);
+    setIntegrationMessage('');
+    try {
+      const response = await api.delete<IntegrationState>('/api/integrations/' + selectedIntegration);
+      setIntegrationMessage(response.data.message || 'Integração desativada.');
+      setIntegrationFields({});
+      await loadIntegrations();
+    } catch {
+      setIntegrationMessage('Não foi possível desativar a integração.');
+    } finally {
+      setIntegrationBusy(false);
+    }
+  };
+
   const createApiKey = async () => {
     if (!apiKeyName.trim()) return;
     const response = await api.post<{ key?: string }>('/api/open/v1/keys', { name: apiKeyName.trim() });
@@ -3604,6 +3620,7 @@ function SettingsView(props: ViewProps) {
               </div>
 
               <div className="mt-5 flex flex-wrap justify-end gap-2">
+                {state?.status && state.status !== 'Inativo' && <button onClick={() => void deactivateIntegration()} disabled={integrationBusy} className="rounded-xl border border-red-100 px-4 py-3 text-[10px] font-semibold text-red-500">Desativar integração</button>}
                 <button onClick={() => void testIntegration()} disabled={integrationBusy} className="flex items-center gap-2 rounded-xl border border-[#d9dde0] px-4 py-3 text-[10px] font-semibold"><RefreshCw size={13} />Testar conexão</button>
                 <button onClick={() => void saveIntegration()} disabled={integrationBusy} className="rounded-xl bg-[#159fe5] px-5 py-3 text-[10px] font-bold text-white">Salvar configuração</button>
               </div>

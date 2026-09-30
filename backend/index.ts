@@ -1704,6 +1704,34 @@ export const handler = router({
     return json(saved);
   }],
 
+  'DELETE /api/integrations/:id': [async ({ params }) => {
+    if (!integrationIds.includes(params.id)) return error('Integração desconhecida', 404);
+    const collection = tenantCollection('mesa_integrations');
+    const result = await db.list<IntegrationConfig>(collection, { limit: 50 });
+    const existing = result.items.find(item => item.providerId === params.id);
+    if (existing) {
+      const [deleted] = await db.delete(collection, [existing.id]);
+      if (!deleted) return error('Integração não encontrada', 404);
+    }
+
+    if (params.id === 'totem' || params.id === 'kds') {
+      const currentState = await get();
+      if (params.id === 'totem') currentState.state.settings.selfServiceEnabled = false;
+      if (params.id === 'kds') currentState.state.settings.kdsEnabled = false;
+      audit(currentState.state, 'integration', params.id, 'Integração desativada', params.id);
+      await save(currentState.id, currentState.state);
+    }
+
+    return json({
+      id: params.id,
+      enabled: false,
+      status: 'Inativo',
+      fields: {},
+      updatedAt: new Date().toISOString(),
+      message: 'Integração desativada.',
+    });
+  }],
+
   'GET /api/open/v1/keys': [async () => {
     const tenantId = currentTenantId();
     const result = await db.list<OpenApiKeyRecord>('mesa_open_api_keys', { limit: 1000 });
