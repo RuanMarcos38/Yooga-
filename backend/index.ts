@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { ai, db, storage, router, json, error, currentRequestHeaders } from './appdeploy-compat.js';
 
 type P = {
@@ -779,7 +779,7 @@ const externalCredentialIntegrations = new Set([
 ]);
 
 const integrationRules: Record<string, { required?: string[]; credentialVariables?: string[]; native?: boolean }> = {
-  n8n: { required: ['webhookUrl'] },
+  n8n: { required: [] },
   'pix-auto': { required: ['merchantDocument', 'provider'], credentialVariables: ['credentialVariable'] },
   ifood: { required: ['merchantId', 'storeId'], credentialVariables: ['clientIdVariable', 'clientCredentialVariable', 'accessCredentialVariable'] },
   '99food': { required: ['storeId'], credentialVariables: ['credentialVariable'] },
@@ -835,6 +835,49 @@ const sanitizeIntegrationFields = (raw: unknown) => {
   return output;
 };
 
+function firstEnv(...names: string[]) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+function hasConfiguredFields(fields: Record<string, string> | undefined) {
+  return Object.values(fields || {}).some(value => isConfigured(value));
+}
+
+function resolveEnvUrl(fields: Record<string, string>, directKey: string, variableKey: string, ...fallbackEnvNames: string[]) {
+  const variableName = fields[variableKey]?.trim();
+  if (variableName && isEnvVariableName(variableName) && process.env[variableName]) return process.env[variableName]!.trim();
+  return fields[directKey]?.trim() || firstEnv(...fallbackEnvNames);
+}
+
+function integrationEnvFields(providerId: string): Record<string, string> {
+  if (providerId === 'n8n') {
+    const webhookUrl = firstEnv('TAPFOOD_WEBHOOK_URL', 'N8N_WEBHOOK_URL', 'WEBHOOK_URL');
+    return webhookUrl ? { webhookUrlVariable: 'TAPFOOD_WEBHOOK_URL' } : {};
+  }
+  if (providerId === 'google-analytics') {
+    const measurementId = firstEnv('TAPFOOD_GA_MEASUREMENT_ID', 'GA_MEASUREMENT_ID', 'GOOGLE_ANALYTICS_MEASUREMENT_ID');
+    return measurementId ? { measurementId } : {};
+  }
+  if (providerId === 'facebook-pixel') {
+    const pixelId = firstEnv('TAPFOOD_META_PIXEL_ID', 'META_PIXEL_ID', 'FACEBOOK_PIXEL_ID');
+    return pixelId ? { pixelId } : {};
+  }
+  if (providerId === 'meta-capi') {
+    const pixelId = firstEnv('TAPFOOD_META_PIXEL_ID', 'META_PIXEL_ID', 'FACEBOOK_PIXEL_ID');
+    return pixelId ? { pixelId, credentialVariable: 'TAPFOOD_META_CAPI_ACCESS_TOKEN' } : {};
+  }
+  return {};
+}
+
+function fieldsWithEnvDefaults(providerId: string, fields: Record<string, string> | undefined) {
+  const current = fields || {};
+  return hasConfiguredFields(current) ? current : integrationEnvFields(providerId);
+}
+
 function placeholderFieldsFor(providerId: string, fields: Record<string, string>) {
   const providerRules = placeholderFieldValues[providerId] || {};
   return Object.entries(providerRules)
@@ -879,15 +922,20 @@ async function listIntegrationConfigs(tenantId = currentTenantId(), unitId = cur
       };
     }
 
-    if (item && item.enabled !== false) {
-      const validation = validateIntegration(providerId, item.fields || {});
+    const effectiveFields = fieldsWithEnvDefaults(providerId, item?.fields);
+    const configuredFromEnvironment = !hasConfiguredFields(item?.fields) && hasConfiguredFields(effectiveFields);
+
+    if ((item && item.enabled !== false) || configuredFromEnvironment) {
+      const validation = validateIntegration(providerId, effectiveFields);
       return {
         id: providerId,
         enabled: validation.state === 'active',
         status: integrationStatusFromValidation(validation),
-        fields: item.fields ?? {},
-        updatedAt: item.updatedAt,
-        message: validation.message,
+        fields: effectiveFields,
+        updatedAt: item?.updatedAt || new Date().toISOString(),
+        message: configuredFromEnvironment
+          ? validation.message + ' Configuração carregada das variáveis de ambiente do servidor.'
+          : validation.message,
       };
     }
 
@@ -895,7 +943,7 @@ async function listIntegrationConfigs(tenantId = currentTenantId(), unitId = cur
       id: providerId,
       enabled: item?.enabled ?? false,
       status: item?.status ?? 'Inativo',
-      fields: item?.fields ?? {},
+      fields: fieldsWithEnvDefaults(providerId, item?.fields),
       updatedAt: item?.updatedAt,
       message: item?.message,
     };
@@ -953,10 +1001,12 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   const rule = integrationRules[providerId] || {};
   if (rule.native) return { state: 'active', message: 'Módulo nativo pronto para uso.' };
 
-  const missing = (rule.required || []).filter(key => !isConfigured(fields[key]));
+  const normalizedFields = fieldsWithEnvDefaults(providerId, fields);
+
+  const missing = (rule.required || []).filter(key => !isConfigured(normalizedFields[key]));
   if (missing.length) return { state: 'invalid', message: 'Campos obrigatórios pendentes: ' + missing.join(', ') + '.' };
 
-  const placeholders = placeholderFieldsFor(providerId, fields);
+  const placeholders = placeholderFieldsFor(providerId, normalizedFields);
   if (placeholders.length) {
     return {
       state: 'invalid',
@@ -965,33 +1015,34 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   }
 
   if (providerId === 'n8n') {
-    return /^https?:\/\/.+/i.test(fields.webhookUrl || '')
+    const webhookUrl = resolveEnvUrl(normalizedFields, 'webhookUrl', 'webhookUrlVariable', 'TAPFOOD_WEBHOOK_URL', 'N8N_WEBHOOK_URL', 'WEBHOOK_URL');
+    return /^https?:\/\/.+/i.test(webhookUrl)
       ? { state: 'active', message: 'Webhook n8n válido e pronto para receber eventos.' }
-      : { state: 'invalid', message: 'Webhook n8n inválido. Use uma URL http(s).' };
+      : { state: 'invalid', message: 'Webhook inválido. Use uma URL http(s) ou a variável TAPFOOD_WEBHOOK_URL no servidor.' };
   }
   if (providerId === 'google-analytics') {
-    return /^G-[A-Z0-9]+$/i.test(fields.measurementId || '')
+    return /^G-[A-Z0-9]+$/i.test(normalizedFields.measurementId || '')
       ? { state: 'active', message: 'GA4 configurado para instrumentação do cardápio.' }
       : { state: 'invalid', message: 'ID GA4 inválido. Use o formato G-XXXXXXXXXX.' };
   }
   if (providerId === 'google-tag-manager') {
-    return /^GTM-[A-Z0-9]+$/i.test(fields.containerId || '')
+    return /^GTM-[A-Z0-9]+$/i.test(normalizedFields.containerId || '')
       ? { state: 'active', message: 'Container GTM configurado.' }
       : { state: 'invalid', message: 'Container GTM inválido. Use o formato GTM-XXXXXXX.' };
   }
   if (providerId === 'facebook-pixel') {
-    return /^\d{8,25}$/.test(fields.pixelId || '')
+    return /^\d{8,25}$/.test(normalizedFields.pixelId || '')
       ? { state: 'active', message: 'Pixel configurado para eventos do cardápio.' }
       : { state: 'invalid', message: 'Pixel ID inválido.' };
   }
   if (providerId === 'custom-domain') {
-    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(fields.domain || '')
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(normalizedFields.domain || '')
       ? { state: 'active', message: 'Domínio válido. Aponte o DNS para o frontend publicado.' }
       : { state: 'invalid', message: 'Domínio inválido.' };
   }
 
   if (externalCredentialIntegrations.has(providerId)) {
-    if (hasReadyCredential(fields, rule.credentialVariables)) {
+    if (hasReadyCredential(normalizedFields, rule.credentialVariables)) {
       return { state: 'active', message: 'Credenciais encontradas no ambiente e configuração pronta para produção.' };
     }
     const expected = (rule.credentialVariables || ['credentialVariable']).join(', ');
@@ -1008,25 +1059,32 @@ async function notifyN8n(state: S, event: string, payload: Record<string, unknow
   try {
     const integrations = await listIntegrationConfigs(tenantId, unitId);
     const n8n = integrations.find(item => item.id === 'n8n');
-    const webhookUrl = n8n?.fields?.webhookUrl;
+    const webhookUrl = n8n ? resolveEnvUrl(n8n.fields || {}, 'webhookUrl', 'webhookUrlVariable', 'TAPFOOD_WEBHOOK_URL', 'N8N_WEBHOOK_URL', 'WEBHOOK_URL') : '';
     if (!n8n?.enabled || !webhookUrl || n8n.status === 'Erro') return;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
+    const body = JSON.stringify({
+      system: 'TAPFOOD',
+      event,
+      occurredAt: new Date().toISOString(),
+      store: {
+        restaurantName: state.settings.restaurantName,
+        unit: state.settings.unit,
+      },
+      payload,
+    });
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Tapfood-Event': event,
+    };
+    const webhookSecret = firstEnv('TAPFOOD_WEBHOOK_SECRET', 'N8N_WEBHOOK_SECRET', 'WEBHOOK_SECRET');
+    if (webhookSecret) headers['X-Tapfood-Signature'] = 'sha256=' + createHmac('sha256', webhookSecret).update(body).digest('hex');
     try {
       await fetch(webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system: 'TAPFOOD',
-          event,
-          occurredAt: new Date().toISOString(),
-          store: {
-            restaurantName: state.settings.restaurantName,
-            unit: state.settings.unit,
-          },
-          payload,
-        }),
+        headers,
+        body,
         signal: controller.signal,
       });
     } finally {
@@ -1035,6 +1093,28 @@ async function notifyN8n(state: S, event: string, payload: Record<string, unknow
   } catch (err) {
     console.error('n8n notification failed', err);
   }
+}
+
+async function publicTrackingConfig(tenantId = currentTenantId(), unitId = currentUnitId()) {
+  const integrations = await listIntegrationConfigs(tenantId, unitId);
+  const ga = integrations.find(item => item.id === 'google-analytics' && item.enabled && item.status === 'Ativo');
+  const pixel = integrations.find(item => item.id === 'facebook-pixel' && item.enabled && item.status === 'Ativo');
+  const webhook = integrations.find(item => item.id === 'n8n' && item.enabled && item.status === 'Ativo');
+  const metaCapi = integrations.find(item => item.id === 'meta-capi' && item.enabled && item.status === 'Ativo');
+
+  return {
+    googleAnalytics: ga?.fields?.measurementId ? { measurementId: ga.fields.measurementId } : null,
+    metaPixel: pixel?.fields?.pixelId ? { pixelId: pixel.fields.pixelId } : null,
+    webhook: {
+      enabled: Boolean(webhook),
+      provider: webhook ? 'n8n' : null,
+      signed: Boolean(firstEnv('TAPFOOD_WEBHOOK_SECRET', 'N8N_WEBHOOK_SECRET', 'WEBHOOK_SECRET')),
+    },
+    metaConversionsApi: {
+      enabled: Boolean(metaCapi),
+    },
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 const allowedOrderStatuses = new Set(['Novo', 'Preparando', 'Pronto', 'Entregue', 'Finalizado', 'Cancelado']);
@@ -1290,6 +1370,8 @@ export const handler = router({
     version: '2026.09.20',
     modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'users', 'audit', 'integrations', 'n8n', 'printers', 'open-api', 'reports', 'exports', 'qa', 'support'],
   })],
+
+  'GET /api/public/tracking': [async () => json(await publicTrackingConfig())],
 
   'GET /api/state/version': [async () => {
     const current = await get();

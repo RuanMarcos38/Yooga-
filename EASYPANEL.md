@@ -19,6 +19,18 @@ PUBLIC_API_URL=https://api.tapfood.com.br
 CORS_ORIGIN=https://tapfood.com.br,https://www.tapfood.com.br
 ```
 
+Integrações reais opcionais do backend:
+
+```env
+TAPFOOD_GA_MEASUREMENT_ID=G-SEU_ID_REAL
+TAPFOOD_META_PIXEL_ID=SEU_PIXEL_ID_REAL
+TAPFOOD_WEBHOOK_URL=https://seu-webhook-real
+TAPFOOD_WEBHOOK_SECRET=segredo-para-assinar-eventos
+TAPFOOD_META_CAPI_ACCESS_TOKEN=token-oficial-meta-capi
+```
+
+`TAPFOOD_GA_MEASUREMENT_ID` e `TAPFOOD_META_PIXEL_ID` são IDs públicos usados pelo frontend para carregar GA4 e Meta Pixel. `TAPFOOD_WEBHOOK_URL`, `TAPFOOD_WEBHOOK_SECRET` e `TAPFOOD_META_CAPI_ACCESS_TOKEN` devem ficar somente no ambiente do backend.
+
 Healthcheck:
 
 ```text

@@ -163,12 +163,129 @@ type ReportSummary = {
   paymentMethods: Array<{ method: string; count: number; total: number }>;
   channels: Array<{ channel: string; count: number; total: number }>;
 };
+type PublicTrackingConfig = {
+  googleAnalytics?: { measurementId: string } | null;
+  metaPixel?: { pixelId: string } | null;
+  webhook?: { enabled: boolean; provider: string | null; signed?: boolean };
+  metaConversionsApi?: { enabled: boolean };
+  generatedAt?: string;
+};
 type Page = 'dashboard' | 'pdv' | 'tables' | 'history' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
 type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string; unitId?: string; unitName?: string; token: string; expiresAt: string };
 
 const BRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ACCENT = '#f45f3f';
 const AUTH_STORAGE_KEY = 'tapfood-auth-session';
+
+type MetaPixelFn = ((...args: unknown[]) => void) & {
+  callMethod?: (...args: unknown[]) => void;
+  loaded?: boolean;
+  push?: MetaPixelFn;
+  queue?: unknown[][];
+  version?: string;
+};
+
+declare global {
+  interface Window {
+    dataLayer?: unknown[][];
+    gtag?: (...args: unknown[]) => void;
+    fbq?: MetaPixelFn;
+    _fbq?: MetaPixelFn;
+  }
+}
+
+const installedGaIds = new Set<string>();
+const installedMetaPixels = new Set<string>();
+let lastTrackedPath = '';
+let navigationTrackingInstalled = false;
+let activeTrackingConfig: PublicTrackingConfig | null = null;
+
+function loadScriptOnce(id: string, src: string) {
+  if (typeof document === 'undefined' || document.getElementById(id)) return;
+  const script = document.createElement('script');
+  script.id = id;
+  script.async = true;
+  script.src = src;
+  document.head.appendChild(script);
+}
+
+function safeTrackingPath() {
+  if (typeof window === 'undefined') return '/';
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('cliente')) return '/cliente';
+  return window.location.pathname || '/';
+}
+
+function installGoogleAnalytics(measurementId?: string) {
+  if (typeof window === 'undefined' || !measurementId || !/^G-[A-Z0-9]+$/i.test(measurementId)) return;
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = window.gtag || ((...args: unknown[]) => { window.dataLayer?.push(args); });
+  loadScriptOnce('tapfood-ga4-' + measurementId, 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(measurementId));
+  if (!installedGaIds.has(measurementId)) {
+    window.gtag('js', new Date());
+    window.gtag('config', measurementId, { send_page_view: false });
+    installedGaIds.add(measurementId);
+  }
+}
+
+function installMetaPixel(pixelId?: string) {
+  if (typeof window === 'undefined' || !pixelId || !/^\d{8,25}$/.test(pixelId)) return;
+  if (!window.fbq) {
+    const fbq = ((...args: unknown[]) => {
+      if (fbq.callMethod) fbq.callMethod(...args);
+      else fbq.queue?.push(args);
+    }) as MetaPixelFn;
+    fbq.push = fbq;
+    fbq.loaded = true;
+    fbq.version = '2.0';
+    fbq.queue = [];
+    window.fbq = fbq;
+    window._fbq = fbq;
+    loadScriptOnce('tapfood-meta-pixel', 'https://connect.facebook.net/en_US/fbevents.js');
+  }
+  if (!installedMetaPixels.has(pixelId)) {
+    window.fbq('init', pixelId);
+    installedMetaPixels.add(pixelId);
+  }
+}
+
+function trackPublicPageView(config: PublicTrackingConfig) {
+  if (typeof window === 'undefined') return;
+  const path = safeTrackingPath();
+  if (lastTrackedPath === path) return;
+  lastTrackedPath = path;
+  const measurementId = config.googleAnalytics?.measurementId;
+  if (measurementId && window.gtag) {
+    window.gtag('event', 'page_view', {
+      page_path: path,
+      page_location: window.location.origin + path,
+      page_title: document.title || 'TAPFOOD',
+    });
+  }
+  const pixelId = config.metaPixel?.pixelId;
+  if (pixelId && window.fbq) window.fbq('track', 'PageView');
+}
+
+function installPublicTracking(config: PublicTrackingConfig) {
+  activeTrackingConfig = config;
+  installGoogleAnalytics(config.googleAnalytics?.measurementId);
+  installMetaPixel(config.metaPixel?.pixelId);
+
+  if (!navigationTrackingInstalled && typeof window !== 'undefined') {
+    const originalPushState = window.history.pushState;
+    window.history.pushState = function pushStateWithTracking(...args) {
+      const result = originalPushState.apply(this, args);
+      window.setTimeout(() => { if (activeTrackingConfig) trackPublicPageView(activeTrackingConfig); }, 0);
+      return result;
+    };
+    window.addEventListener('popstate', () => {
+      window.setTimeout(() => { if (activeTrackingConfig) trackPublicPageView(activeTrackingConfig); }, 0);
+    });
+    navigationTrackingInstalled = true;
+  }
+
+  trackPublicPageView(config);
+}
 
 async function signedCustomerLink(tableName: string) {
   const response = await api.post<{ token: string; tableId: string; tableName: string; companyId: string }>('/api/customer/access', { tableName });
@@ -334,6 +451,19 @@ const tableLoginPassword = (tableName: string) => 'mesa' + (tableName.match(/\d+
 export default function MesaApp() {
   const customerCode = new URLSearchParams(window.location.search).get('cliente');
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
+  const [trackingConfig, setTrackingConfig] = useState<PublicTrackingConfig | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.get<PublicTrackingConfig>('/api/public/tracking')
+      .then(response => { if (active) setTrackingConfig(response.data); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (trackingConfig) installPublicTracking(trackingConfig);
+  }, [trackingConfig?.googleAnalytics?.measurementId, trackingConfig?.metaPixel?.pixelId]);
 
   const handleLogin = (nextSession: AuthSession) => {
     window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession));
@@ -3474,7 +3604,11 @@ function SettingsView(props: ViewProps) {
   const fieldSpec = (id: string) => {
     const commonStore = [{ key: 'storeId', label: 'ID da loja / estabelecimento', placeholder: 'Informe o ID fornecido pelo parceiro' }];
     const credentialVariable = { key: 'credentialVariable', label: 'Variável de credencial no backend', placeholder: 'NOME_DA_VARIAVEL_NO_EASYPANEL' };
-    if (id === 'n8n') return [{ key: 'webhookUrl', label: 'Webhook n8n', placeholder: 'https://seu-n8n/webhook/tapfood' }, { key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' }];
+    if (id === 'n8n') return [
+      { key: 'webhookUrl', label: 'Webhook n8n', placeholder: 'https://seu-n8n/webhook/tapfood' },
+      { key: 'webhookUrlVariable', label: 'Variável do webhook', placeholder: 'TAPFOOD_WEBHOOK_URL' },
+      { key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' },
+    ];
     if (id === 'ifood') return [...commonStore, { key: 'merchantId', label: 'Merchant ID', placeholder: 'ID comercial do iFood' }, { key: 'syncMode', label: 'Sincronização', placeholder: 'Pedidos, status, cardápio' }, { key: 'clientIdVariable', label: 'Variável Client ID', placeholder: 'IFOOD_CLIENT_ID' }, { key: 'clientCredentialVariable', label: 'Variável credencial privada', placeholder: 'IFOOD_CLIENT_CREDENTIAL' }, { key: 'accessCredentialVariable', label: 'Variável credencial de acesso', placeholder: 'IFOOD_ACCESS_CREDENTIAL' }];
     if (id === '99food' || id === 'keeta') return [...commonStore, credentialVariable];
     if (id === 'google-analytics') return [{ key: 'measurementId', label: 'ID de mensuração GA4', placeholder: 'G-XXXXXXXXXX' }];
@@ -3613,6 +3747,9 @@ function SettingsView(props: ViewProps) {
                   </Field>
                 ))}
                 {fieldSpec(selectedIntegration).length === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] text-emerald-700">Este módulo usa a infraestrutura nativa do sistema e não exige campos adicionais.</div>}
+                {selectedIntegration === 'n8n' && (
+                  <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-[10px] leading-4 text-sky-700">Em produção, prefira salvar a URL real no EasyPanel como TAPFOOD_WEBHOOK_URL e preencher aqui apenas o nome da variável.</div>
+                )}
                 {['ifood','99food','keeta','pix-auto','wallet-pay','pos','foody-delivery','meta-capi','zapturbo','boletim'].includes(selectedIntegration) && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[9px] leading-4 text-amber-800">Credenciais, tokens e autorizações oficiais do parceiro não são armazenados neste formulário. O conector só será marcado como ativo depois que a autorização oficial estiver disponível no backend seguro.</div>
                 )}
