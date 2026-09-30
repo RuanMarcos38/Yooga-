@@ -20,8 +20,9 @@ jobs:
         shell: bash
         run: |
           if [[ -z "$EASYPANEL_BACKEND_DEPLOY_URL" || -z "$EASYPANEL_FRONTEND_DEPLOY_URL" ]]; then
-            echo "::error::EasyPanel deploy não executado: configure EASYPANEL_BACKEND_DEPLOY_URL e EASYPANEL_FRONTEND_DEPLOY_URL nos Secrets do GitHub ou habilite Auto Deploy nativo no EasyPanel."
-            exit 1
+            echo "::notice::EasyPanel trigger URLs não configuradas nos Secrets do GitHub. Pulando este workflow porque o Auto Deploy nativo do EasyPanel pode publicar a branch main."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           echo "configured=true" >> "$GITHUB_OUTPUT"
