@@ -31,6 +31,8 @@ TAPFOOD_META_CAPI_ACCESS_TOKEN=token-oficial-meta-capi
 
 `TAPFOOD_GA_MEASUREMENT_ID` e `TAPFOOD_META_PIXEL_ID` são IDs públicos usados pelo frontend para carregar GA4 e Meta Pixel. `TAPFOOD_WEBHOOK_URL`, `TAPFOOD_WEBHOOK_SECRET` e `TAPFOOD_META_CAPI_ACCESS_TOKEN` devem ficar somente no ambiente do backend.
 
+Também é possível preencher o ID GA4, o Pixel ID e o webhook n8n pela Central de Integrações da plataforma. Ao clicar em `Testar conexão`, o backend salva os campos informados e só marca a integração como `Ativo` quando a validação passa; no n8n, esse teste envia um ping real para a URL configurada. Segredos, tokens e chaves privadas continuam fora da tela e devem ser mantidos como variáveis de ambiente no EasyPanel.
+
 Healthcheck:
 
 ```text

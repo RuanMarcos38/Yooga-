@@ -1055,6 +1055,62 @@ function validateIntegration(providerId: string, fields: Record<string, string>)
   return { state: 'configured', message: 'Configuração registrada.' };
 }
 
+function n8nWebhookRequest(event: string, payload: Record<string, unknown>, state?: S) {
+  const body = JSON.stringify({
+    system: 'TAPFOOD',
+    event,
+    occurredAt: new Date().toISOString(),
+    ...(state ? {
+      store: {
+        restaurantName: state.settings.restaurantName,
+        unit: state.settings.unit,
+      },
+    } : {}),
+    payload,
+  });
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Tapfood-Event': event,
+  };
+  const webhookSecret = firstEnv('TAPFOOD_WEBHOOK_SECRET', 'N8N_WEBHOOK_SECRET', 'WEBHOOK_SECRET');
+  if (webhookSecret) headers['X-Tapfood-Signature'] = 'sha256=' + createHmac('sha256', webhookSecret).update(body).digest('hex');
+  return { body, headers };
+}
+
+async function postN8nWebhook(webhookUrl: string, event: string, payload: Record<string, unknown>, state?: S) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  const request = n8nWebhookRequest(event, payload, state);
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      return { ok: true as const, status: response.status, message: 'Webhook n8n validado com resposta HTTP ' + response.status + '.' };
+    }
+    if (response.status === 404) {
+      return { ok: false as const, status: response.status, message: 'Webhook n8n respondeu HTTP 404. Publique o workflow no n8n e use a URL de produção /webhook/...' };
+    }
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false as const, status: response.status, message: 'Webhook n8n recusou o teste com HTTP ' + response.status + '. Revise autenticação, headers ou permissões do workflow.' };
+    }
+    return { ok: false as const, status: response.status, message: 'Webhook n8n respondeu HTTP ' + response.status + '. Ajuste o workflow antes de ativar.' };
+  } catch (err) {
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    return {
+      ok: false as const,
+      message: isAbort
+        ? 'Webhook n8n não respondeu em até 6 segundos. Verifique se o workflow está publicado e acessível.'
+        : 'Não foi possível conectar ao webhook n8n. Verifique a URL de produção e a disponibilidade do n8n.',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function notifyN8n(state: S, event: string, payload: Record<string, unknown>, tenantId = currentTenantId(), unitId = currentUnitId()) {
   try {
     const integrations = await listIntegrationConfigs(tenantId, unitId);
@@ -1062,34 +1118,7 @@ async function notifyN8n(state: S, event: string, payload: Record<string, unknow
     const webhookUrl = n8n ? resolveEnvUrl(n8n.fields || {}, 'webhookUrl', 'webhookUrlVariable', 'TAPFOOD_WEBHOOK_URL', 'N8N_WEBHOOK_URL', 'WEBHOOK_URL') : '';
     if (!n8n?.enabled || !webhookUrl || n8n.status === 'Erro') return;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-    const body = JSON.stringify({
-      system: 'TAPFOOD',
-      event,
-      occurredAt: new Date().toISOString(),
-      store: {
-        restaurantName: state.settings.restaurantName,
-        unit: state.settings.unit,
-      },
-      payload,
-    });
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Tapfood-Event': event,
-    };
-    const webhookSecret = firstEnv('TAPFOOD_WEBHOOK_SECRET', 'N8N_WEBHOOK_SECRET', 'WEBHOOK_SECRET');
-    if (webhookSecret) headers['X-Tapfood-Signature'] = 'sha256=' + createHmac('sha256', webhookSecret).update(body).digest('hex');
-    try {
-      await fetch(webhookUrl, {
-        method: 'POST',
-        headers,
-        body,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+    await postN8nWebhook(webhookUrl, event, payload, state);
   } catch (err) {
     console.error('n8n notification failed', err);
   }
@@ -1788,11 +1817,14 @@ export const handler = router({
     return json(saved);
   }],
 
-  'POST /api/integrations/:id/test': [async ({ params }) => {
+  'POST /api/integrations/:id/test': [async ({ params, body }) => {
     if (!integrationIds.includes(params.id)) return error('Integração desconhecida', 404);
     const all = await listIntegrationConfigs();
     const current = all.find(item => item.id === params.id);
-    const fields = current?.fields || {};
+    const value = body && typeof body === 'object' ? body as { fields?: Record<string, unknown> } : {};
+    const fields = Object.prototype.hasOwnProperty.call(value, 'fields')
+      ? sanitizeIntegrationFields(value.fields)
+      : current?.fields || {};
 
     if (params.id === 'open-api') {
       const tenantId = currentTenantId();
@@ -1824,6 +1856,19 @@ export const handler = router({
         enabled: false,
         status: 'Aguardando credenciais',
         message: result.message,
+      });
+      return json(saved);
+    }
+
+    if (params.id === 'n8n' && result.state === 'active') {
+      const webhookUrl = resolveEnvUrl(fieldsWithEnvDefaults(params.id, fields), 'webhookUrl', 'webhookUrlVariable', 'TAPFOOD_WEBHOOK_URL', 'N8N_WEBHOOK_URL', 'WEBHOOK_URL');
+      const currentState = await get();
+      const delivery = await postN8nWebhook(webhookUrl, 'integration.test', { source: 'integration-test' }, currentState.state);
+      const saved = await saveIntegrationConfig(params.id, {
+        fields,
+        enabled: delivery.ok,
+        status: delivery.ok ? 'Ativo' : 'Erro',
+        message: delivery.message,
       });
       return json(saved);
     }

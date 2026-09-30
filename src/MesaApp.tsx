@@ -3647,7 +3647,7 @@ function SettingsView(props: ViewProps) {
     setIntegrationBusy(true);
     setIntegrationMessage('');
     try {
-      const response = await api.post<{ message?: string }>('/api/integrations/' + selectedIntegration + '/test', {});
+      const response = await api.post<{ message?: string }>('/api/integrations/' + selectedIntegration + '/test', { fields: integrationFields });
       setIntegrationMessage(String(response.data?.message || 'Teste concluído.'));
       await loadIntegrations();
     } catch {
@@ -3748,7 +3748,10 @@ function SettingsView(props: ViewProps) {
                 ))}
                 {fieldSpec(selectedIntegration).length === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] text-emerald-700">Este módulo usa a infraestrutura nativa do sistema e não exige campos adicionais.</div>}
                 {selectedIntegration === 'n8n' && (
-                  <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-[10px] leading-4 text-sky-700">Em produção, prefira salvar a URL real no EasyPanel como TAPFOOD_WEBHOOK_URL e preencher aqui apenas o nome da variável.</div>
+                  <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-[10px] leading-4 text-sky-700">Em produção, prefira salvar a URL real no EasyPanel como TAPFOOD_WEBHOOK_URL e preencher aqui apenas o nome da variável. O teste envia um ping real e só ativa quando o n8n responder com sucesso.</div>
+                )}
+                {['google-analytics','facebook-pixel'].includes(selectedIntegration) && (
+                  <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-[10px] leading-4 text-sky-700">O teste valida o ID informado e, quando aprovado, libera o carregamento automático no cardápio publicado.</div>
                 )}
                 {['ifood','99food','keeta','pix-auto','wallet-pay','pos','foody-delivery','meta-capi','zapturbo','boletim'].includes(selectedIntegration) && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[9px] leading-4 text-amber-800">Credenciais, tokens e autorizações oficiais do parceiro não são armazenados neste formulário. O conector só será marcado como ativo depois que a autorização oficial estiver disponível no backend seguro.</div>
