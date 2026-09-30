@@ -59,6 +59,8 @@ import {
   CircleDollarSign,
   Megaphone,
   Palette,
+  Download,
+  Eye,
 } from 'lucide-react';
 
 type Product = {
@@ -123,7 +125,7 @@ type AppSettings = {
 };
 type Table = { id: string; name: string; seats: number; status: 'Livre' | 'Ocupada' | 'Aguardando' | 'Fechamento'; total: number; waiter?: string };
 type Item = { productId: string; name: string; qty: number; price: number };
-type Order = { id: string; code: string; channel: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; updatedAt?: string; startedAt?: string; readyAt?: string; deliveredAt?: string; paymentMethod?: string };
+type Order = { id: string; code: string; channel: string; companyId?: string; unitId?: string; tableId?: string; createdBy?: string; table?: string; customer?: string; items: Item[]; total: number; status: string; createdAt: string; updatedAt?: string; startedAt?: string; readyAt?: string; deliveredAt?: string; paymentMethod?: string };
 type Customer = { id: string; name: string; phone: string; email?: string; orders: number; totalSpent: number; lastOrder: string };
 type Stock = { id: string; name: string; unit: string; current: number; minimum: number; cost: number };
 type Tx = { id: string; description: string; type: 'Entrada' | 'Saída'; amount: number; date: string; category: string; createdAt?: string };
@@ -143,6 +145,24 @@ type State = {
   auditLog: AuditEvent[];
   settings: AppSettings;
 };
+type ExportFile = { filename: string; contentType: string; content: string };
+type OrderDetails = Order & { events?: AuditEvent[]; table?: Table | null };
+type ReportSummary = {
+  generatedAt: string;
+  revenue: number;
+  orders: number;
+  activeOrders: number;
+  averageTicket: number;
+  cancellationRate: number;
+  recurrenceRate: number;
+  averagePrepMinutes: number;
+  completedOrders: number;
+  pendingServiceRequests: number;
+  lowStock: Array<{ id: string; name: string; current: number; minimum: number; unit: string }>;
+  topProducts: Array<{ id: string; name: string; qty: number; revenue: number }>;
+  paymentMethods: Array<{ method: string; count: number; total: number }>;
+  channels: Array<{ channel: string; count: number; total: number }>;
+};
 type Page = 'dashboard' | 'pdv' | 'tables' | 'history' | 'menu' | 'kds' | 'delivery' | 'products' | 'stock' | 'finance' | 'customers' | 'reports' | 'settings';
 type AuthSession = { mode: 'empresa' | 'cliente'; name: string; role: string; email?: string; tableCode?: string; userId?: string; companyId?: string; companyName?: string; unitId?: string; unitName?: string; token: string; expiresAt: string };
 
@@ -153,6 +173,18 @@ const AUTH_STORAGE_KEY = 'tapfood-auth-session';
 async function signedCustomerLink(tableName: string) {
   const response = await api.post<{ token: string; tableId: string; tableName: string; companyId: string }>('/api/customer/access', { tableName });
   return window.location.origin + '/?cliente=' + encodeURIComponent(response.data.token);
+}
+
+function downloadTextFile(file: ExportFile) {
+  const blob = new Blob([file.content], { type: file.contentType || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 const nav: Array<[Page, string, typeof LayoutDashboard]> = [
@@ -2451,17 +2483,51 @@ function TablesView(props: ViewProps) {
 function HistoryView(props: ViewProps) {
   const [tab, setTab] = useState<'sales' | 'payments' | 'moves'>('sales');
   const [query, setQuery] = useState('');
+  const [movementOpen, setMovementOpen] = useState(false);
+  const [movementForm, setMovementForm] = useState({ description: '', type: 'Entrada' as Tx['type'], amount: '', category: 'Caixa' });
+  const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
+  const [historyMessage, setHistoryMessage] = useState('');
   const cash = props.data.cashRegister;
   const salesTotal = props.data.orders.filter(order => order.status !== 'Cancelado').reduce((sum, order) => sum + order.total, 0);
   const manualEntries = props.data.transactions.filter(tx => tx.type === 'Entrada' && tx.category !== 'Vendas').reduce((sum, tx) => sum + tx.amount, 0);
   const exits = props.data.transactions.filter(tx => tx.type === 'Saída').reduce((sum, tx) => sum + tx.amount, 0);
 
   const addMovement = async (type: 'Entrada' | 'Saída') => {
-    const description = window.prompt(type === 'Entrada' ? 'Descrição da entrada' : 'Descrição da saída');
-    if (!description) return;
-    const amount = Number(window.prompt('Valor') || 0);
-    if (amount <= 0) return;
-    await props.run(() => api.post('/api/transactions', { description, type, amount, category: 'Caixa' }), type === 'Entrada' ? 'Entrada adicionada ao caixa.' : 'Saída adicionada ao caixa.');
+    setMovementForm({ description: '', type, amount: '', category: 'Caixa' });
+    setMovementOpen(true);
+  };
+
+  const saveMovement = async () => {
+    const amount = Number(movementForm.amount);
+    if (!movementForm.description.trim() || !Number.isFinite(amount) || amount <= 0) {
+      setHistoryMessage('Informe descrição e valor válido.');
+      return;
+    }
+    await props.run(
+      () => api.post('/api/transactions', { ...movementForm, amount }),
+      movementForm.type === 'Entrada' ? 'Entrada adicionada ao caixa.' : 'Saída adicionada ao caixa.'
+    );
+    setMovementOpen(false);
+    setHistoryMessage('');
+  };
+
+  const openOrderDetails = async (orderId: string) => {
+    try {
+      const response = await api.get<OrderDetails>('/api/orders/' + orderId);
+      setOrderDetails(response.data);
+    } catch {
+      setHistoryMessage('Não foi possível carregar os detalhes do pedido.');
+    }
+  };
+
+  const exportOrders = async () => {
+    try {
+      const response = await api.get<ExportFile>('/api/exports/orders');
+      downloadTextFile(response.data);
+      setHistoryMessage('Exportação de pedidos gerada.');
+    } catch {
+      setHistoryMessage('Não foi possível exportar os pedidos.');
+    }
   };
 
   const toggleCash = async () => {
@@ -2494,9 +2560,11 @@ function HistoryView(props: ViewProps) {
             <span className={'rounded-full px-2.5 py-1 text-[10px] font-bold ' + (cash.status === 'Aberto' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>● {cash.status}</span>
           </div>
           <button onClick={() => window.print()} className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#159fe5]"><Printer size={17} />Imprimir</button>
+          <button onClick={() => void exportOrders()} className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#159fe5]"><Download size={17} />Exportar CSV</button>
           <button onClick={() => void addMovement('Entrada')} className="flex items-center gap-2 rounded-lg bg-[#f4f4f4] px-4 py-3 text-xs font-semibold text-emerald-600"><Plus size={16} />Adicionar entrada</button>
           <button onClick={() => void addMovement('Saída')} className="flex items-center gap-2 rounded-lg bg-[#f4f4f4] px-4 py-3 text-xs font-semibold text-rose-500"><Plus size={16} />Adicionar Saída</button>
         </div>
+        {historyMessage && <div className="mt-4 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] text-[#35667d]">{historyMessage}</div>}
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <CashCard title="Vendas" value={salesTotal} />
@@ -2526,10 +2594,7 @@ function HistoryView(props: ViewProps) {
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por forma de pagamento ou valor..." className="min-w-0 flex-1 text-xs outline-none" />
             <Search size={17} className="text-[#596166]" />
           </label>
-          <button onClick={() => {
-            const value = prompt('Filtrar relatório por cliente, canal, pagamento ou valor:', query);
-            if (value !== null) setQuery(value.trim());
-          }} className="flex h-11 items-center gap-1 rounded-lg border border-[#9fa7ad] px-3 text-[10px] font-semibold text-[#697178]">Filtrar <SlidersHorizontal size={14} /></button>
+          <button onClick={() => setQuery('')} className="flex h-11 items-center gap-1 rounded-lg border border-[#9fa7ad] px-3 text-[10px] font-semibold text-[#697178]">Limpar <SlidersHorizontal size={14} /></button>
         </div>
 
         {tab === 'sales' && (
@@ -2543,8 +2608,8 @@ function HistoryView(props: ViewProps) {
                   <td>{order.channel}{order.table ? ' · ' + order.table : ''}</td>
                   <td>{order.paymentMethod || 'Não informado'}</td>
                   <td className="font-bold">{BRL(order.total)}</td>
-                  <td>Equipe</td>
-                  <td><button onClick={() => alert(order.items.map(item => item.qty + 'x ' + item.name).join('\n'))} className="text-[#159fe5]">Detalhes</button></td>
+                  <td>{order.createdBy || 'Equipe'}</td>
+                  <td><button onClick={() => void openOrderDetails(order.id)} className="inline-flex items-center gap-1 text-[#159fe5]"><Eye size={13} />Detalhes</button></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -2583,6 +2648,43 @@ function HistoryView(props: ViewProps) {
           {props.data.auditLog.length === 0 && <p className="text-xs text-slate-400">Nenhuma movimentação registrada ainda.</p>}
         </div>
       </div>
+
+      {movementOpen && (
+        <Modal title={movementForm.type === 'Entrada' ? 'Adicionar entrada' : 'Adicionar saída'} onClose={() => setMovementOpen(false)}>
+          <div className="grid gap-3">
+            <Field label="Descrição"><input value={movementForm.description} onChange={event => setMovementForm({ ...movementForm, description: event.target.value })} className="control" /></Field>
+            <Field label="Categoria"><input value={movementForm.category} onChange={event => setMovementForm({ ...movementForm, category: event.target.value })} className="control" /></Field>
+            <Field label="Valor"><input type="number" min="0" step="0.01" value={movementForm.amount} onChange={event => setMovementForm({ ...movementForm, amount: event.target.value })} className="control" /></Field>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setMovementOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button>
+            <button onClick={() => void saveMovement()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar movimentação</button>
+          </div>
+        </Modal>
+      )}
+
+      {orderDetails && (
+        <Modal title={'Pedido ' + orderDetails.code} onClose={() => setOrderDetails(null)}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <MiniStat label="Cliente" value={orderDetails.customer || 'Cliente balcão'} />
+            <MiniStat label="Canal" value={orderDetails.channel + (orderDetails.table ? ' · ' + orderDetails.table : '')} />
+            <MiniStat label="Status" value={orderDetails.status} />
+            <MiniStat label="Total" value={BRL(orderDetails.total)} />
+          </div>
+          <div className="mt-4 rounded-xl border border-[#ece9e4]">
+            {orderDetails.items.map((item, index) => (
+              <div key={index} className="flex items-center justify-between border-t px-4 py-3 first:border-t-0">
+                <span className="text-xs"><b>{item.qty}x</b> {item.name}</span>
+                <b className="text-xs">{BRL(item.qty * item.price)}</b>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">
+            Criado em {new Date(orderDetails.createdAt).toLocaleString('pt-BR')} · Pagamento {orderDetails.paymentMethod || 'não informado'}
+            {orderDetails.events?.length ? ' · ' + orderDetails.events.length + ' evento(s) de auditoria' : ''}
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }
@@ -2623,16 +2725,39 @@ function KdsView(props: ViewProps) {
 }
 
 function DeliveryView(props: ViewProps) {
+  const nextDeliveryStatus = (status: string) => {
+    if (status === 'Novo') return 'Preparando';
+    if (status === 'Preparando') return 'Pronto';
+    if (status === 'Pronto') return 'Entregue';
+    return '';
+  };
+  const actionLabel = (status: string) => {
+    if (status === 'Novo') return 'Aceitar';
+    if (status === 'Preparando') return 'Despachar';
+    if (status === 'Pronto') return 'Entregar';
+    return '';
+  };
+  const openDeliveryOrder = () => {
+    props.setChannel('Delivery');
+    props.setTable('');
+    props.setPage('pdv');
+  };
+  const deliveryOrders = props.data.orders.filter(order => order.channel === 'Delivery');
   return (
-    <PageSection title="Delivery" subtitle="Pedidos de entrega e retirada">
+    <PageSection title="Delivery" subtitle="Pedidos de entrega e retirada" action="Novo delivery" onAction={openDeliveryOrder}>
       <Surface>
-        {props.data.orders.filter(order => order.channel === 'Delivery').map(order => (
+        {deliveryOrders.map(order => {
+          const next = nextDeliveryStatus(order.status);
+          return (
           <DataRow key={order.id}>
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#ef5a38]"><Bike size={17} /></span>
             <span className="min-w-0 flex-1"><b className="block text-xs">{order.code} · {order.customer}</b><small className="text-[10px] text-slate-400">{order.items.length} item(ns) · {order.paymentMethod || 'Pagamento não informado'}</small></span>
             <b className="text-xs">{BRL(order.total)}</b><Badge value={order.status} />
+            {next && <button onClick={() => void props.run(() => api.put('/api/orders/' + order.id + '/status', { status: next }), 'Delivery atualizado.')} className="rounded-lg bg-[#f45f3f] px-3 py-2 text-[9px] font-bold text-white">{actionLabel(order.status)}</button>}
           </DataRow>
-        ))}
+          );
+        })}
+        {deliveryOrders.length === 0 && <div className="rounded-xl border border-[#e8e4de] bg-[#faf9f6] p-6 text-center text-xs text-slate-400">Nenhum pedido de delivery no momento.</div>}
       </Surface>
     </PageSection>
   );
@@ -2757,14 +2882,43 @@ function ProductsView(props: ViewProps) {
 }
 
 function StockView(props: ViewProps) {
-  const adjust = async (item: Stock) => {
-    const delta = Number(prompt('Quantidade a adicionar (use valor negativo para saída)') || 0);
-    if (!delta) return;
-    await props.run(() => api.post('/api/stock/' + item.id + '/adjust', { delta }), 'Estoque atualizado.');
+  const [adjusting, setAdjusting] = useState<Stock | null>(null);
+  const [delta, setDelta] = useState('');
+  const [stockMessage, setStockMessage] = useState('');
+
+  const openAdjust = (item: Stock) => {
+    setAdjusting(item);
+    setDelta('');
+    setStockMessage('');
+  };
+
+  const saveAdjust = async () => {
+    if (!adjusting) return;
+    const parsed = Number(delta);
+    if (!Number.isFinite(parsed) || parsed === 0) {
+      setStockMessage('Informe uma quantidade válida. Use valor negativo para saída.');
+      return;
+    }
+    await props.run(() => api.post('/api/stock/' + adjusting.id + '/adjust', { delta: parsed }), 'Estoque atualizado.');
+    setAdjusting(null);
+    setDelta('');
+  };
+
+  const exportStock = async () => {
+    try {
+      const response = await api.get<ExportFile>('/api/exports/stock');
+      downloadTextFile(response.data);
+    } catch {
+      setStockMessage('Não foi possível exportar o estoque.');
+    }
   };
   return (
     <PageSection title="Estoque" subtitle="Controle de insumos, mínimos e reposição">
       <Surface>
+        <div className="mb-3 flex justify-end border-b border-[#f0f0f4] pb-3">
+          <button onClick={() => void exportStock()} className="flex items-center gap-2 rounded-lg border border-[#d9dde0] px-3 py-2 text-[10px] font-semibold text-[#159fe5]"><Download size={14} />Exportar estoque</button>
+        </div>
+        {stockMessage && <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] text-amber-800">{stockMessage}</div>}
         {props.data.stock.map(item => (
           <DataRow key={item.id}>
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#ef5a38]"><Boxes size={16} /></span>
@@ -2772,32 +2926,83 @@ function StockView(props: ViewProps) {
             <span className="text-[10px]">{item.current} {item.unit}</span>
             <span className="text-[10px] text-slate-400">Mín. {item.minimum}</span>
             <Badge value={item.current <= item.minimum ? 'Repor' : 'Ativo'} />
-            <button onClick={() => void adjust(item)} className="rounded-lg bg-[#f45f3f] px-3 py-2 text-[9px] font-bold text-white">Movimentar</button>
+            <button onClick={() => openAdjust(item)} className="rounded-lg bg-[#f45f3f] px-3 py-2 text-[9px] font-bold text-white">Movimentar</button>
           </DataRow>
         ))}
       </Surface>
+      {adjusting && (
+        <Modal title={'Movimentar ' + adjusting.name} onClose={() => setAdjusting(null)}>
+          <div className="grid gap-3">
+            <MiniStat label="Saldo atual" value={String(adjusting.current) + ' ' + adjusting.unit} />
+            <Field label="Quantidade"><input type="number" step="0.001" value={delta} onChange={event => setDelta(event.target.value)} placeholder="Ex.: 5 ou -2" className="control" /></Field>
+            <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Valores positivos registram entrada. Valores negativos registram saída ou perda.</div>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setAdjusting(null)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button>
+            <button onClick={() => void saveAdjust()} className="rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-bold text-white">Salvar estoque</button>
+          </div>
+        </Modal>
+      )}
     </PageSection>
   );
 }
 
 function FinanceView(props: ViewProps) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ description: '', type: 'Entrada' as Tx['type'], amount: '', category: 'Receitas' });
+  const [financeMessage, setFinanceMessage] = useState('');
   const income = props.data.transactions.filter(tx => tx.type === 'Entrada').reduce((sum, tx) => sum + tx.amount, 0);
   const expense = props.data.transactions.filter(tx => tx.type === 'Saída').reduce((sum, tx) => sum + tx.amount, 0);
   const create = async () => {
-    const description = prompt('Descrição do lançamento');
-    if (!description) return;
-    const type = confirm('OK para ENTRADA. Cancelar para SAÍDA.') ? 'Entrada' : 'Saída';
-    const amount = Number(prompt('Valor') || 0);
-    if (amount <= 0) return;    await props.run(() => api.post('/api/transactions', { description, type, amount, category: type === 'Entrada' ? 'Receitas' : 'Despesas' }), 'Lançamento financeiro criado.');
+    const amount = Number(form.amount);
+    if (!form.description.trim() || !Number.isFinite(amount) || amount <= 0) {
+      setFinanceMessage('Preencha descrição e valor válido.');
+      return;
+    }
+    await props.run(() => api.post('/api/transactions', { ...form, amount }), 'Lançamento financeiro criado.');
+    setOpen(false);
+    setForm({ description: '', type: 'Entrada', amount: '', category: 'Receitas' });
+    setFinanceMessage('');
+  };
+  const openCreate = () => {
+    setForm({ description: '', type: 'Entrada', amount: '', category: 'Receitas' });
+    setFinanceMessage('');
+    setOpen(true);
+  };
+  const exportTransactions = async () => {
+    try {
+      const response = await api.get<ExportFile>('/api/exports/transactions');
+      downloadTextFile(response.data);
+    } catch {
+      setFinanceMessage('Não foi possível exportar o financeiro.');
+    }
   };
   return (
-    <PageSection title="Financeiro" subtitle="Fluxo de caixa e movimentações" action="Novo lançamento" onAction={create}>
+    <PageSection title="Financeiro" subtitle="Fluxo de caixa e movimentações" action="Novo lançamento" onAction={openCreate}>
       <div className="mb-4 grid gap-3 sm:grid-cols-3"><Metric label="Entradas" value={BRL(income)} /><Metric label="Saídas" value={BRL(expense)} /><Metric label="Saldo" value={BRL(income - expense)} /></div>
       <Surface>
+        <div className="mb-3 flex justify-end border-b border-[#f0f0f4] pb-3">
+          <button onClick={() => void exportTransactions()} className="flex items-center gap-2 rounded-lg border border-[#d9dde0] px-3 py-2 text-[10px] font-semibold text-[#159fe5]"><Download size={14} />Exportar financeiro</button>
+        </div>
+        {financeMessage && <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] text-amber-800">{financeMessage}</div>}
         {props.data.transactions.map(tx => (
           <DataRow key={tx.id}><span className={'grid h-9 w-9 place-items-center rounded-lg ' + (tx.type === 'Entrada' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500')}><WalletCards size={16} /></span><span className="flex-1"><b className="block text-xs">{tx.description}</b><small className="text-[10px] text-slate-400">{tx.category} · {tx.date}</small></span><b className={'text-xs ' + (tx.type === 'Entrada' ? 'text-emerald-600' : 'text-red-500')}>{tx.type === 'Entrada' ? '+' : '-'} {BRL(tx.amount)}</b></DataRow>
         ))}
       </Surface>
+      {open && (
+        <Modal title="Novo lançamento financeiro" onClose={() => setOpen(false)}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2"><Field label="Descrição"><input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} className="control" /></Field></div>
+            <Field label="Tipo"><select value={form.type} onChange={event => setForm({ ...form, type: event.target.value as Tx['type'], category: event.target.value === 'Entrada' ? 'Receitas' : 'Despesas' })} className="control"><option>Entrada</option><option>Saída</option></select></Field>
+            <Field label="Valor"><input type="number" min="0" step="0.01" value={form.amount} onChange={event => setForm({ ...form, amount: event.target.value })} className="control" /></Field>
+            <div className="sm:col-span-2"><Field label="Categoria"><input value={form.category} onChange={event => setForm({ ...form, category: event.target.value })} className="control" /></Field></div>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button>
+            <button onClick={() => void create()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar lançamento</button>
+          </div>
+        </Modal>
+      )}
     </PageSection>
   );
 }
@@ -2840,13 +3045,64 @@ function CustomersView(props: ViewProps) {
 }
 
 function ReportsView(props: ViewProps) {
+  const [summary, setSummary] = useState<ReportSummary | null>(null);
+  const [message, setMessage] = useState('');
   const average = props.data.orders.reduce((sum, order) => sum + order.total, 0) / Math.max(1, props.data.orders.length);
+
+  useEffect(() => {
+    let active = true;
+    api.get<ReportSummary>('/api/reports/summary')
+      .then(response => { if (active) setSummary(response.data); })
+      .catch(() => { if (active) setMessage('Relatório local carregado. O resumo do servidor ficou indisponível agora.'); });
+    return () => { active = false; };
+  }, [props.data.orders.length, props.data.transactions.length, props.data.stock.length]);
+
+  const exportReport = async (type: 'orders' | 'products' | 'customers') => {
+    try {
+      const response = await api.get<ExportFile>('/api/exports/' + type);
+      downloadTextFile(response.data);
+      setMessage('Exportação gerada.');
+    } catch {
+      setMessage('Não foi possível gerar a exportação.');
+    }
+  };
+
+  const topProducts = summary?.topProducts || props.data.products.slice(0, 5).map(product => ({ id: product.id, name: product.name, qty: 0, revenue: product.price }));
   return (
     <PageSection title="Relatórios" subtitle="Indicadores da operação">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Faturamento" value={BRL(props.sales)} /><Metric label="Pedidos ativos" value={String(props.activeOrders)} /><Metric label="Ticket médio" value={BRL(average)} /><Metric label="Clientes" value={String(props.data.customers.length)} /></div>
+      <div className="mb-4 flex flex-wrap justify-end gap-2">
+        <button onClick={() => void exportReport('orders')} className="flex items-center gap-2 rounded-lg border border-[#d9dde0] bg-white px-3 py-2 text-[10px] font-semibold text-[#159fe5]"><Download size={14} />Pedidos</button>
+        <button onClick={() => void exportReport('products')} className="flex items-center gap-2 rounded-lg border border-[#d9dde0] bg-white px-3 py-2 text-[10px] font-semibold text-[#159fe5]"><Download size={14} />Produtos</button>
+        <button onClick={() => void exportReport('customers')} className="flex items-center gap-2 rounded-lg border border-[#d9dde0] bg-white px-3 py-2 text-[10px] font-semibold text-[#159fe5]"><Download size={14} />Clientes</button>
+      </div>
+      {message && <div className="mb-4 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] text-[#35667d]">{message}</div>}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Faturamento" value={BRL(summary?.revenue ?? props.sales)} />
+        <Metric label="Pedidos ativos" value={String(summary?.activeOrders ?? props.activeOrders)} />
+        <Metric label="Ticket médio" value={BRL(summary?.averageTicket ?? average)} />
+        <Metric label="Clientes" value={String(props.data.customers.length)} />
+      </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Surface><SectionHead title="Produtos em destaque" subtitle="Ranking do catálogo" />{props.data.products.slice(0, 5).map((product, index) => <DataRow key={product.id}><b className="w-7 text-xs text-[#ef5a38]">#{index + 1}</b><span className="flex-1 text-xs">{product.name}</span><Star size={13} className="text-[#f6b62f]" fill="#f6b62f" /></DataRow>)}</Surface>
-        <Surface><SectionHead title="Resumo operacional" subtitle="Performance do restaurante" /><div className="grid grid-cols-2 gap-3"><MiniStat label="Tempo preparo" value="14m 32s" /><MiniStat label="Cancelamentos" value="1,8%" /><MiniStat label="Recorrência" value="42%" /><MiniStat label="Avaliação" value="4,8 / 5" /></div></Surface>
+        <Surface><SectionHead title="Produtos em destaque" subtitle="Ranking calculado pelos pedidos" />{topProducts.slice(0, 5).map((product, index) => <DataRow key={product.id}><b className="w-7 text-xs text-[#ef5a38]">#{index + 1}</b><span className="flex-1 text-xs">{product.name}</span><small className="text-[9px] text-slate-400">{product.qty ? product.qty + ' vendido(s)' : 'Sem venda registrada'}</small><Star size={13} className="text-[#f6b62f]" fill="#f6b62f" /></DataRow>)}</Surface>
+        <Surface>
+          <SectionHead title="Resumo operacional" subtitle="Performance calculada no backend" />
+          <div className="grid grid-cols-2 gap-3">
+            <MiniStat label="Tempo preparo" value={(summary?.averagePrepMinutes || 0) + ' min'} />
+            <MiniStat label="Cancelamentos" value={(summary?.cancellationRate ?? 0) + '%'} />
+            <MiniStat label="Recorrência" value={(summary?.recurrenceRate ?? 0) + '%'} />
+            <MiniStat label="Alertas" value={String(summary?.pendingServiceRequests ?? props.data.serviceRequests.filter(item => item.status === 'pending').length)} />
+          </div>
+        </Surface>
+        <Surface>
+          <SectionHead title="Formas de pagamento" subtitle="Total por método" />
+          {(summary?.paymentMethods || []).map(item => <DataRow key={item.method}><CreditCard size={16} className="text-[#159fe5]" /><span className="flex-1 text-xs">{item.method}</span><small className="text-[9px] text-slate-400">{item.count} venda(s)</small><b className="text-xs">{BRL(item.total)}</b></DataRow>)}
+          {summary && summary.paymentMethods.length === 0 && <p className="text-xs text-slate-400">Sem vendas registradas.</p>}
+        </Surface>
+        <Surface>
+          <SectionHead title="Estoque mínimo" subtitle="Itens que precisam de atenção" />
+          {(summary?.lowStock || props.data.stock.filter(item => item.current <= item.minimum)).slice(0, 8).map(item => <DataRow key={item.id}><Boxes size={16} className="text-[#f45f3f]" /><span className="flex-1 text-xs">{item.name}</span><small className="text-[9px] text-slate-400">{item.current} / mín. {item.minimum} {item.unit}</small></DataRow>)}
+          {summary && summary.lowStock.length === 0 && <p className="text-xs text-slate-400">Nenhum item abaixo do mínimo.</p>}
+        </Surface>
       </div>
     </PageSection>
   );
@@ -3217,19 +3473,20 @@ function SettingsView(props: ViewProps) {
 
   const fieldSpec = (id: string) => {
     const commonStore = [{ key: 'storeId', label: 'ID da loja / estabelecimento', placeholder: 'Informe o ID fornecido pelo parceiro' }];
+    const credentialVariable = { key: 'credentialVariable', label: 'Variável de credencial no backend', placeholder: 'NOME_DA_VARIAVEL_NO_EASYPANEL' };
     if (id === 'n8n') return [{ key: 'webhookUrl', label: 'Webhook n8n', placeholder: 'https://seu-n8n/webhook/tapfood' }, { key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' }];
-    if (id === 'ifood') return [...commonStore, { key: 'merchantId', label: 'Merchant ID', placeholder: 'ID comercial do iFood' }, { key: 'syncMode', label: 'Sincronização', placeholder: 'Pedidos, status, cardápio' }];
-    if (id === '99food' || id === 'keeta') return commonStore;
+    if (id === 'ifood') return [...commonStore, { key: 'merchantId', label: 'Merchant ID', placeholder: 'ID comercial do iFood' }, { key: 'syncMode', label: 'Sincronização', placeholder: 'Pedidos, status, cardápio' }, { key: 'clientIdVariable', label: 'Variável Client ID', placeholder: 'IFOOD_CLIENT_ID' }, { key: 'clientCredentialVariable', label: 'Variável credencial privada', placeholder: 'IFOOD_CLIENT_CREDENTIAL' }, { key: 'accessCredentialVariable', label: 'Variável credencial de acesso', placeholder: 'IFOOD_ACCESS_CREDENTIAL' }];
+    if (id === '99food' || id === 'keeta') return [...commonStore, credentialVariable];
     if (id === 'google-analytics') return [{ key: 'measurementId', label: 'ID de mensuração GA4', placeholder: 'G-XXXXXXXXXX' }];
     if (id === 'google-tag-manager') return [{ key: 'containerId', label: 'Container ID', placeholder: 'GTM-XXXXXXX' }];
     if (id === 'facebook-pixel') return [{ key: 'pixelId', label: 'Pixel ID', placeholder: '123456789012345' }];
-    if (id === 'meta-capi') return [{ key: 'pixelId', label: 'Pixel ID', placeholder: '123456789012345' }, { key: 'datasetId', label: 'Dataset ID', placeholder: 'Opcional' }];
+    if (id === 'meta-capi') return [{ key: 'pixelId', label: 'Pixel ID', placeholder: '123456789012345' }, { key: 'datasetId', label: 'Dataset ID', placeholder: 'Opcional' }, credentialVariable];
     if (id === 'custom-domain') return [{ key: 'domain', label: 'Domínio', placeholder: 'cardapio.seudominio.com.br' }];
-    if (id === 'pos') return [{ key: 'terminalId', label: 'ID do terminal', placeholder: 'Terminal / serial' }, { key: 'provider', label: 'Adquirente', placeholder: 'Nome do provedor' }];
-    if (id === 'pix-auto') return [{ key: 'merchantDocument', label: 'CNPJ do estabelecimento', placeholder: '00.000.000/0000-00' }, { key: 'provider', label: 'Provedor', placeholder: 'Banco / PSP' }];
-    if (id === 'wallet-pay') return [{ key: 'merchantId', label: 'Merchant ID', placeholder: 'Identificador do estabelecimento' }];
-    if (id === 'zapturbo' || id === 'boletim') return [{ key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' }];
-    if (id === 'driver-app' || id === 'foody-delivery') return [{ key: 'operationName', label: 'Identificação da operação', placeholder: 'Nome / ID da frota' }];
+    if (id === 'pos') return [{ key: 'terminalId', label: 'ID do terminal', placeholder: 'Terminal / serial' }, { key: 'provider', label: 'Adquirente', placeholder: 'Nome do provedor' }, credentialVariable];
+    if (id === 'pix-auto') return [{ key: 'merchantDocument', label: 'CNPJ do estabelecimento', placeholder: '00.000.000/0000-00' }, { key: 'provider', label: 'Provedor', placeholder: 'Banco / PSP' }, credentialVariable];
+    if (id === 'wallet-pay') return [{ key: 'merchantId', label: 'Merchant ID', placeholder: 'Identificador do estabelecimento' }, credentialVariable];
+    if (id === 'zapturbo' || id === 'boletim') return [{ key: 'whatsappNumber', label: 'WhatsApp da operação', placeholder: '55DDDNUMERO' }, credentialVariable];
+    if (id === 'driver-app' || id === 'foody-delivery') return [{ key: 'operationName', label: 'Identificação da operação', placeholder: 'Nome / ID da frota' }, credentialVariable];
     if (id === 'totem') return [{ key: 'stationName', label: 'Identificação do Totem', placeholder: 'Totem entrada' }];
     if (id === 'kds') return [{ key: 'stationName', label: 'Estação KDS', placeholder: 'Cozinha principal' }];
     return [];
@@ -3500,7 +3757,7 @@ function SettingsView(props: ViewProps) {
           </div>
           <div className="flex flex-wrap gap-2">
             {props.session.role === 'Super Admin' && <button onClick={() => openCompany()} className="flex items-center gap-2 rounded-xl border border-[#f45f3f] bg-white px-4 py-3 text-xs font-bold text-[#f45f3f]"><Store size={15} />Criar empresa</button>}
-            {(props.session.role === 'Super Admin' || props.session.role === 'Administrador') && <button onClick={() => openUnit()} className="flex items-center gap-2 rounded-xl border border-[#159fe5] bg-white px-4 py-3 text-xs font-bold text-[#159fe5]"><MapPin size={15} />Criar unidade</button>}
+            {(props.session.role === 'Super Admin' || props.session.role === 'Administrador') && <button onClick={() => openUnit()} className="flex items-center gap-2 rounded-xl border border-[#159fe5] bg-white px-4 py-3 text-xs font-bold text-[#159fe5]"><MapPinned size={15} />Criar unidade</button>}
             <button onClick={() => openUser()} className="flex items-center gap-2 rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white"><Plus size={15} />Criar usuário</button>
           </div>
         </div>
@@ -3533,7 +3790,7 @@ function SettingsView(props: ViewProps) {
             <div className="space-y-2">
               {units.map(unit => (
                 <div key={unit.id} className="flex items-center gap-3 rounded-xl border border-[#ebe7e2] bg-white p-3">
-                  <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#eef8fd] text-[#159fe5]"><MapPin size={16} /></span>
+                  <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#eef8fd] text-[#159fe5]"><MapPinned size={16} /></span>
                   <span className="min-w-0 flex-1"><b className="block truncate text-xs">{unit.name}</b><small className="block truncate text-[9px] text-slate-400">{companies.find(company => company.id === unit.companyId)?.name || props.session.companyName || 'Empresa'} · {unit.address}</small></span>
                   <Badge value={unit.status} />
                   {(props.session.role === 'Super Admin' || props.session.role === 'Administrador') && <button onClick={() => openUnit(unit)} className="rounded-lg border px-3 py-2 text-[9px] font-semibold">Editar</button>}
