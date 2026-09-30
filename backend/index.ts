@@ -761,6 +761,11 @@ type OpenApiKeyRecord = {
   createdAt: string;
 };
 
+type IntegrationValidationResult = {
+  state: 'active' | 'configured' | 'credentials' | 'invalid';
+  message: string;
+};
+
 const integrationIds = [
   'n8n',
   'pix-auto', 'ifood', '99food', 'keeta', 'wallet-pay', 'pos', 'totem', 'zapturbo',
@@ -772,6 +777,28 @@ const externalCredentialIntegrations = new Set([
   'pix-auto', 'ifood', '99food', 'keeta', 'wallet-pay', 'pos', 'zapturbo',
   'boletim', 'driver-app', 'foody-delivery', 'meta-capi',
 ]);
+
+const integrationRules: Record<string, { required?: string[]; credentialVariables?: string[]; native?: boolean }> = {
+  n8n: { required: ['webhookUrl'] },
+  'pix-auto': { required: ['merchantDocument', 'provider'], credentialVariables: ['credentialVariable'] },
+  ifood: { required: ['merchantId', 'storeId'], credentialVariables: ['clientIdVariable', 'clientCredentialVariable', 'accessCredentialVariable'] },
+  '99food': { required: ['storeId'], credentialVariables: ['credentialVariable'] },
+  keeta: { required: ['storeId'], credentialVariables: ['credentialVariable'] },
+  'wallet-pay': { required: ['merchantId'], credentialVariables: ['credentialVariable'] },
+  pos: { required: ['terminalId', 'provider'], credentialVariables: ['credentialVariable'] },
+  zapturbo: { required: ['whatsappNumber'], credentialVariables: ['credentialVariable'] },
+  boletim: { required: ['whatsappNumber'], credentialVariables: ['credentialVariable'] },
+  'driver-app': { required: ['operationName'], credentialVariables: ['credentialVariable'] },
+  'foody-delivery': { required: ['operationName'], credentialVariables: ['credentialVariable'] },
+  'meta-capi': { required: ['pixelId'], credentialVariables: ['credentialVariable'] },
+  'custom-domain': { required: ['domain'] },
+  'google-analytics': { required: ['measurementId'] },
+  'google-tag-manager': { required: ['containerId'] },
+  'facebook-pixel': { required: ['pixelId'] },
+  totem: { native: true },
+  kds: { native: true },
+  'open-api': { native: true },
+};
 
 const sanitizeIntegrationFields = (raw: unknown) => {
   const input = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
@@ -856,15 +883,66 @@ async function validateOpenApiKey(event: any) {
   return result.items.find(item => item.active && item.keyHash === hash) || null;
 }
 
-function validateIntegration(providerId: string, fields: Record<string, string>) {
-  if (providerId === 'n8n') return /^https?:\/\/.+/i.test(fields.webhookUrl || '') ? 'active' : 'invalid';
-  if (providerId === 'google-analytics') return /^G-[A-Z0-9]+$/i.test(fields.measurementId || '') ? 'active' : 'invalid';
-  if (providerId === 'google-tag-manager') return /^GTM-[A-Z0-9]+$/i.test(fields.containerId || '') ? 'active' : 'invalid';
-  if (providerId === 'facebook-pixel') return /^\d{8,25}$/.test(fields.pixelId || '') ? 'active' : 'invalid';
-  if (providerId === 'custom-domain') return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(fields.domain || '') ? 'active' : 'invalid';
-  if (providerId === 'totem' || providerId === 'kds') return 'active';
-  if (externalCredentialIntegrations.has(providerId)) return Object.values(fields).some(Boolean) ? 'credentials' : 'invalid';
-  return 'configured';
+function isConfigured(value: string | undefined) {
+  return Boolean(value && String(value).trim());
+}
+
+function isEnvVariableName(value: string | undefined) {
+  return Boolean(value && /^[A-Z][A-Z0-9_]{2,120}$/.test(value.trim()));
+}
+
+function hasReadyCredential(fields: Record<string, string>, names: string[] = []) {
+  return names.some(name => {
+    const envName = fields[name]?.trim();
+    return isEnvVariableName(envName) && Boolean(process.env[envName!]);
+  });
+}
+
+function validateIntegration(providerId: string, fields: Record<string, string>): IntegrationValidationResult {
+  const rule = integrationRules[providerId] || {};
+  if (rule.native) return { state: 'active', message: 'Módulo nativo pronto para uso.' };
+
+  const missing = (rule.required || []).filter(key => !isConfigured(fields[key]));
+  if (missing.length) return { state: 'invalid', message: 'Campos obrigatórios pendentes: ' + missing.join(', ') + '.' };
+
+  if (providerId === 'n8n') {
+    return /^https?:\/\/.+/i.test(fields.webhookUrl || '')
+      ? { state: 'active', message: 'Webhook n8n válido e pronto para receber eventos.' }
+      : { state: 'invalid', message: 'Webhook n8n inválido. Use uma URL http(s).' };
+  }
+  if (providerId === 'google-analytics') {
+    return /^G-[A-Z0-9]+$/i.test(fields.measurementId || '')
+      ? { state: 'active', message: 'GA4 configurado para instrumentação do cardápio.' }
+      : { state: 'invalid', message: 'ID GA4 inválido. Use o formato G-XXXXXXXXXX.' };
+  }
+  if (providerId === 'google-tag-manager') {
+    return /^GTM-[A-Z0-9]+$/i.test(fields.containerId || '')
+      ? { state: 'active', message: 'Container GTM configurado.' }
+      : { state: 'invalid', message: 'Container GTM inválido. Use o formato GTM-XXXXXXX.' };
+  }
+  if (providerId === 'facebook-pixel') {
+    return /^\d{8,25}$/.test(fields.pixelId || '')
+      ? { state: 'active', message: 'Pixel configurado para eventos do cardápio.' }
+      : { state: 'invalid', message: 'Pixel ID inválido.' };
+  }
+  if (providerId === 'custom-domain') {
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(fields.domain || '')
+      ? { state: 'active', message: 'Domínio válido. Aponte o DNS para o frontend publicado.' }
+      : { state: 'invalid', message: 'Domínio inválido.' };
+  }
+
+  if (externalCredentialIntegrations.has(providerId)) {
+    if (hasReadyCredential(fields, rule.credentialVariables)) {
+      return { state: 'active', message: 'Credenciais encontradas no ambiente e configuração pronta para produção.' };
+    }
+    const expected = (rule.credentialVariables || ['credentialVariable']).join(', ');
+    return {
+      state: 'credentials',
+      message: 'Configuração salva. Defina a variável de ambiente informada em ' + expected + ' para ativar a conexão real do parceiro.',
+    };
+  }
+
+  return { state: 'configured', message: 'Configuração registrada.' };
 }
 
 async function notifyN8n(state: S, event: string, payload: Record<string, unknown>, tenantId = currentTenantId(), unitId = currentUnitId()) {
@@ -1014,12 +1092,144 @@ function transactionTimestamp(state: S, tx: Tx) {
   return 0;
 }
 
+function csvCell(value: unknown) {
+  const text = String(value ?? '').replace(/\r?\n/g, ' ');
+  return /[",;]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function toCsv(headers: string[], rows: unknown[][]) {
+  return [headers, ...rows].map(row => row.map(csvCell).join(';')).join('\n');
+}
+
+function buildReportSummary(state: S) {
+  const validOrders = state.orders.filter(order => order.status !== 'Cancelado');
+  const revenue = validOrders.reduce((sum, order) => sum + order.total, 0);
+  const activeOrders = state.orders.filter(order => !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status));
+  const completedOrders = state.orders.filter(order => ['Entregue', 'Finalizado'].includes(order.status));
+  const canceledOrders = state.orders.filter(order => order.status === 'Cancelado');
+
+  const productMap = new Map<string, { id: string; name: string; qty: number; revenue: number }>();
+  for (const order of validOrders) {
+    for (const item of order.items) {
+      const current = productMap.get(item.productId) || { id: item.productId, name: item.name, qty: 0, revenue: 0 };
+      current.qty += item.qty;
+      current.revenue = Number((current.revenue + item.qty * item.price).toFixed(2));
+      productMap.set(item.productId, current);
+    }
+  }
+
+  const paymentMethods = Array.from(new Set(validOrders.map(order => order.paymentMethod || 'Não informado'))).map(method => ({
+    method,
+    count: validOrders.filter(order => (order.paymentMethod || 'Não informado') === method).length,
+    total: Number(validOrders.filter(order => (order.paymentMethod || 'Não informado') === method).reduce((sum, order) => sum + order.total, 0).toFixed(2)),
+  }));
+
+  const channels = Array.from(new Set(validOrders.map(order => order.channel || 'Balcão'))).map(channel => ({
+    channel,
+    count: validOrders.filter(order => (order.channel || 'Balcão') === channel).length,
+    total: Number(validOrders.filter(order => (order.channel || 'Balcão') === channel).reduce((sum, order) => sum + order.total, 0).toFixed(2)),
+  }));
+
+  const prepTimes = state.orders
+    .filter(order => order.readyAt && (order.startedAt || order.createdAt))
+    .map(order => Date.parse(order.readyAt!) - Date.parse(order.startedAt || order.createdAt))
+    .filter(value => Number.isFinite(value) && value >= 0);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    revenue: Number(revenue.toFixed(2)),
+    orders: validOrders.length,
+    activeOrders: activeOrders.length,
+    averageTicket: Number((revenue / Math.max(1, validOrders.length)).toFixed(2)),
+    cancellationRate: Number(((canceledOrders.length / Math.max(1, state.orders.length)) * 100).toFixed(2)),
+    recurrenceRate: Number(((state.customers.filter(customer => customer.orders > 1).length / Math.max(1, state.customers.length)) * 100).toFixed(2)),
+    averagePrepMinutes: prepTimes.length ? Number((prepTimes.reduce((sum, value) => sum + value, 0) / prepTimes.length / 60000).toFixed(1)) : 0,
+    completedOrders: completedOrders.length,
+    pendingServiceRequests: state.serviceRequests.filter(request => request.status === 'pending').length,
+    lowStock: state.stock.filter(item => item.current <= item.minimum).map(item => ({
+      id: item.id,
+      name: item.name,
+      current: item.current,
+      minimum: item.minimum,
+      unit: item.unit,
+    })),
+    topProducts: Array.from(productMap.values()).sort((a, b) => b.revenue - a.revenue).slice(0, 10),
+    paymentMethods,
+    channels,
+  };
+}
+
+function exportState(type: string, state: S) {
+  const generatedAt = new Date().toISOString().slice(0, 10);
+  if (type === 'orders') {
+    return {
+      filename: 'tapfood-pedidos-' + generatedAt + '.csv',
+      contentType: 'text/csv; charset=utf-8',
+      content: toCsv(
+        ['codigo', 'cliente', 'canal', 'mesa', 'status', 'pagamento', 'total', 'criado_em', 'itens'],
+        state.orders.map(order => [
+          order.code,
+          order.customer || '',
+          order.channel,
+          order.table || '',
+          order.status,
+          order.paymentMethod || '',
+          order.total.toFixed(2),
+          order.createdAt,
+          order.items.map(item => item.qty + 'x ' + item.name).join(' | '),
+        ])
+      ),
+    };
+  }
+  if (type === 'transactions') {
+    return {
+      filename: 'tapfood-financeiro-' + generatedAt + '.csv',
+      contentType: 'text/csv; charset=utf-8',
+      content: toCsv(
+        ['descricao', 'tipo', 'categoria', 'valor', 'data', 'criado_em'],
+        state.transactions.map(tx => [tx.description, tx.type, tx.category, tx.amount.toFixed(2), tx.date, tx.createdAt || ''])
+      ),
+    };
+  }
+  if (type === 'customers') {
+    return {
+      filename: 'tapfood-clientes-' + generatedAt + '.csv',
+      contentType: 'text/csv; charset=utf-8',
+      content: toCsv(
+        ['nome', 'telefone', 'email', 'pedidos', 'total_gasto', 'ultimo_pedido'],
+        state.customers.map(customer => [customer.name, customer.phone, customer.email || '', customer.orders, customer.totalSpent.toFixed(2), customer.lastOrder])
+      ),
+    };
+  }
+  if (type === 'stock') {
+    return {
+      filename: 'tapfood-estoque-' + generatedAt + '.csv',
+      contentType: 'text/csv; charset=utf-8',
+      content: toCsv(
+        ['item', 'unidade', 'atual', 'minimo', 'custo'],
+        state.stock.map(item => [item.name, item.unit, item.current, item.minimum, item.cost.toFixed(2)])
+      ),
+    };
+  }
+  if (type === 'products') {
+    return {
+      filename: 'tapfood-produtos-' + generatedAt + '.csv',
+      contentType: 'text/csv; charset=utf-8',
+      content: toCsv(
+        ['nome', 'categoria', 'preco', 'estoque', 'ativo', 'codigo', 'tempo_preparo'],
+        state.products.map(product => [product.name, product.category, product.price.toFixed(2), product.stock, product.active ? 'sim' : 'nao', product.code || '', product.prepTime || 15])
+      ),
+    };
+  }
+  return null;
+}
+
 export const handler = router({
   'GET /api/_healthcheck': [async () => json({
     message: 'Success',
     service: 'TAPFOOD Backend',
     version: '2026.09.20',
-    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'users', 'audit', 'integrations', 'n8n', 'printers', 'open-api', 'qa', 'support'],
+    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'users', 'audit', 'integrations', 'n8n', 'printers', 'open-api', 'reports', 'exports', 'qa', 'support'],
   })],
 
   'GET /api/state/version': [async () => {
@@ -1030,6 +1240,32 @@ export const handler = router({
       pendingRequests: current.state.serviceRequests.filter(item => item.status === 'pending').length,
       updatedAt: new Date().toISOString(),
     });
+  }],
+
+  'GET /api/reports/summary': [async () => {
+    const current = await get();
+    return json(buildReportSummary(current.state));
+  }],
+
+  'GET /api/orders/:id': [async ({ params }) => {
+    const current = await get();
+    const order = current.state.orders.find(item => item.id === params.id);
+    if (!order) return error('Pedido não encontrado', 404);
+    const events = current.state.auditLog.filter(item => item.entity === 'order' && item.entityId === order.id);
+    return json({
+      ...order,
+      events,
+      table: order.table ? current.state.tables.find(item => item.name === order.table) || null : null,
+    });
+  }],
+
+  'GET /api/exports/:type': [async ({ params }) => {
+    const current = await get();
+    const exported = exportState(params.type, current.state);
+    if (!exported) return error('Exportação desconhecida', 404);
+    audit(current.state, 'export', params.type, 'Exportação gerada', exported.filename);
+    await save(current.id, current.state);
+    return json(exported);
   }],
 
   'POST /api/customer/access': [async ({ body }) => {
@@ -1431,31 +1667,31 @@ export const handler = router({
     }
 
     const result = validateIntegration(params.id, fields);
-    if (result === 'invalid') {
+    if (result.state === 'invalid') {
       const saved = await saveIntegrationConfig(params.id, {
         fields,
         enabled: false,
         status: 'Erro',
-        message: 'Revise os campos obrigatórios antes de ativar.',
+        message: result.message,
       });
       return json(saved);
     }
 
-    if (result === 'credentials') {
+    if (result.state === 'credentials') {
       const saved = await saveIntegrationConfig(params.id, {
         fields,
         enabled: false,
         status: 'Aguardando credenciais',
-        message: 'Configuração local validada. Falta a autorização/credencial oficial do provedor para ativar a conexão real.',
+        message: result.message,
       });
       return json(saved);
     }
 
     const saved = await saveIntegrationConfig(params.id, {
       fields,
-      enabled: true,
-      status: 'Ativo',
-      message: result === 'active' ? 'Configuração validada e ativa no sistema.' : 'Configuração validada.',
+      enabled: result.state === 'active',
+      status: result.state === 'active' ? 'Ativo' : 'Configurado',
+      message: result.message,
     });
 
     if (params.id === 'totem' || params.id === 'kds') {
