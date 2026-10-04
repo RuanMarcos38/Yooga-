@@ -404,7 +404,7 @@ const PHOTO_BY_PRODUCT: Record<string, string> = {
 
 const RESTAURANT_HERO_IMAGE = 'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=2200&q=84';
 
-const productPhoto = (product: Product) => {
+const productPhoto = (product: Product | CustomerProduct) => {
   if (product.imageUrl) return product.imageUrl;
   if (PHOTO_BY_PRODUCT[product.id]) return PHOTO_BY_PRODUCT[product.id];
   const value = (product.category + ' ' + product.name).toLowerCase();
@@ -480,6 +480,15 @@ export default function MesaApp() {
   if (customerCode) return <CustomerPortal code={customerCode} session={session} onLogout={session?.mode === 'cliente' ? handleLogout : undefined} />;
   if (!session) return <LoginScreen onLogin={handleLogin} />;
   if (session.mode === 'cliente') return <CustomerPortal code={session.tableCode || 'Mesa 01'} session={session} onLogout={handleLogout} />;
+  if (!['Administrador', 'Super Admin'].includes(session.role)) return (
+    <div className="grid min-h-screen place-items-center bg-[#f8f7f4] p-6">
+      <section className="rounded-xl bg-white p-6 text-center">
+        <h1 className="text-lg font-semibold">Acesso restrito</h1>
+        <p className="mt-2 text-sm text-slate-500">As informações internas estão disponíveis somente para administradores.</p>
+        <button onClick={handleLogout} className="mt-4 rounded-lg bg-[#f45f3f] px-4 py-2 text-white">Sair</button>
+      </section>
+    </div>
+  );
   return <AdminApp session={session} onLogout={handleLogout} />;
 }
 
@@ -1735,13 +1744,14 @@ function QuickIcon({ icon, title, onClick }: { icon: ReactNode; title: string; o
   return <button title={title} aria-label={title} onClick={onClick} className="grid h-12 place-items-center rounded-xl bg-[#f4f5f5] text-[#566066] transition hover:bg-[#e9edef]">{icon}</button>;
 }
 
+type CustomerProduct = Omit<Product, 'stock'> & { available: boolean };
 type CustomerPortalData = {
   store: { restaurantName: string; unit: string; serviceFee: number; automaticServiceFee: boolean; pixEnabled: boolean; cardEnabled: boolean; cashEnabled: boolean; brandName: string; brandTagline: string; brandPrimaryColor: string; brandLogoUrl?: string; brandSupportEmail?: string; brandSupportPhone?: string; hideTapfoodBranding: boolean };
   table: Table;
   orders: Order[];
   pendingRequests: ServiceRequest[];
   menuCategories: MenuCategory[];
-  products: Product[];
+  products: CustomerProduct[];
 };
 
 const normalizeCustomerPortalData = (raw: Partial<CustomerPortalData>, code: string): CustomerPortalData => {
@@ -1783,47 +1793,6 @@ const normalizeCustomerPortalData = (raw: Partial<CustomerPortalData>, code: str
   };
 };
 
-const loadCustomerMenuFallback = async (data: CustomerPortalData): Promise<CustomerPortalData> => {
-  if (data.products.length || data.menuCategories.length) return data;
-
-  try {
-    const response = await api.get<Partial<State>>('/api/state');
-    const state = response.data;
-    const menuCategories = Array.isArray(state.menuCategories)
-      ? state.menuCategories
-        .filter(category => category.active)
-        .sort((a, b) => a.order - b.order)
-      : [];
-    const products = Array.isArray(state.products)
-      ? state.products.filter(product => product.active && (!product.channels?.length || product.channels.includes('Mesa')))
-      : [];
-
-    return {
-      ...data,
-      store: state.settings ? {
-        restaurantName: state.settings.restaurantName || data.store.restaurantName,
-        unit: state.settings.unit || data.store.unit,
-        serviceFee: Number(state.settings.serviceFee ?? data.store.serviceFee),
-        automaticServiceFee: state.settings.automaticServiceFee ?? data.store.automaticServiceFee,
-        pixEnabled: state.settings.pixEnabled ?? data.store.pixEnabled,
-        cardEnabled: state.settings.cardEnabled ?? data.store.cardEnabled,
-        cashEnabled: state.settings.cashEnabled ?? data.store.cashEnabled,
-        brandName: state.settings.brandName || data.store.brandName,
-        brandTagline: state.settings.brandTagline || data.store.brandTagline,
-        brandPrimaryColor: state.settings.brandPrimaryColor || data.store.brandPrimaryColor,
-        brandLogoUrl: state.settings.brandLogoUrl || data.store.brandLogoUrl,
-        brandSupportEmail: state.settings.brandSupportEmail || data.store.brandSupportEmail,
-        brandSupportPhone: state.settings.brandSupportPhone || data.store.brandSupportPhone,
-        hideTapfoodBranding: state.settings.hideTapfoodBranding ?? data.store.hideTapfoodBranding,
-      } : data.store,
-      menuCategories,
-      products,
-    };
-  } catch {
-    return data;
-  }
-};
-
 function CustomerPortal({ code, session, onLogout }: { code: string; session?: AuthSession | null; onLogout?: () => void }) {
   const [data, setData] = useState<CustomerPortalData | null>(null);
   const [error, setError] = useState('');
@@ -1854,7 +1823,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     try {
       const response = await api.get('/api/customer/table/' + encodeURIComponent(code));
       const payload = response.data && typeof response.data === 'object' ? response.data as Partial<CustomerPortalData> : {};
-      const next = await loadCustomerMenuFallback(normalizeCustomerPortalData(payload, code));
+      const next = normalizeCustomerPortalData(payload, code);
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         next.orders.forEach(order => {
           const previous = lastStatuses.current[order.id];
@@ -1916,12 +1885,12 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     }
   };
 
-  const addCustomerProduct = (product: Product) => {
+  const addCustomerProduct = (product: CustomerProduct) => {
     setOrderMessage('');
     setCustomerCart(current => {
       const found = current.find(item => item.productId === product.id);
       if (found) {
-        if (found.qty >= product.stock) return current;
+        if (!product.available || found.qty >= 100) return current;
         return current.map(item => item.productId === product.id ? { ...item, qty: item.qty + 1 } : item);
       }
       return [...current, { productId: product.id, name: product.name, qty: 1, price: product.price }];
@@ -1933,7 +1902,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     setCustomerCart(current => current.map(item => {
       if (item.productId !== productId) return item;
       const product = data?.products.find(candidate => candidate.id === productId);
-      const limit = product?.stock || item.qty;
+      const limit = product?.available ? 100 : item.qty;
       return { ...item, qty: Math.min(limit, item.qty + delta) };
     }).filter(item => item.qty > 0));
   };
@@ -1962,7 +1931,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     }
   };
 
-  const continueOrdering = (product?: Product) => {
+  const continueOrdering = (product?: CustomerProduct) => {
     if (product) addCustomerProduct(product);
     setPostOrderOpen(false);
     setPaymentChoiceOpen(false);
@@ -2009,9 +1978,9 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   const orderFee = data.store.automaticServiceFee ? orderSubtotal * (data.store.serviceFee / 100) : 0;
   const orderTotal = Number((orderSubtotal + orderFee).toFixed(2));
   const upsellProduct = data.products
-    .filter(product => product.stock > 0 && !lastOrderedProductIds.includes(product.id))
+    .filter(product => product.available && !lastOrderedProductIds.includes(product.id))
     .sort((a, b) => {
-      const score = (product: Product) => {
+      const score = (product: CustomerProduct) => {
         const text = (product.category + ' ' + product.name).toLowerCase();
         return (/(bebid|sobrem|doce|drink|suco|refriger|água|agua|café|cafe)/.test(text) ? 3 : 0) + (product.featured ? 2 : 0);
       };
@@ -2132,9 +2101,9 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
                         <button onClick={() => changeCustomerQty(product.id, 1)} className="grid h-6 w-6 place-items-center rounded-full bg-[#fff2ee] text-[#e85b3a]"><Plus size={12} /></button>
                       </div>
                     ) : (
-                      <button disabled={product.stock <= 0} onClick={() => addCustomerProduct(product)} className="grid h-9 w-9 place-items-center rounded-full bg-[#f45f3f] text-white disabled:bg-slate-200 disabled:text-slate-400"><Plus size={17} /></button>
+                      <button disabled={!product.available} onClick={() => addCustomerProduct(product)} className="grid h-9 w-9 place-items-center rounded-full bg-[#f45f3f] text-white disabled:bg-slate-200 disabled:text-slate-400"><Plus size={17} /></button>
                     )}
-                    {product.stock <= 0 && <span className="text-[9px] font-bold text-slate-400">Esgotado</span>}
+                    {!product.available && <span className="text-[9px] font-bold text-slate-400">Esgotado</span>}
                   </div>
                 </div>
               );

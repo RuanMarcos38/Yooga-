@@ -204,7 +204,7 @@ export function currentRequestHeaders() {
   return requestContext.getStore()?.headers || {};
 }
 
-export function router(routes: RouteTable) {
+export function router(routes: RouteTable, authorize?: (context: HandlerContext) => ApiResult | null) {
   const entries = Object.entries(routes).map(([key, handlers]) => {
     const [method, ...pathParts] = key.split(' ');
     return { method: method.toUpperCase(), path: pathParts.join(' '), handler: handlers[0] };
@@ -216,7 +216,8 @@ export function router(routes: RouteTable) {
         if (entry.method !== request.method.toUpperCase()) continue;
         const params = matchRoute(entry.path, request.path);
         if (!params) continue;
-        return requestContext.run({ headers: request.headers }, () => entry.handler({
+        return requestContext.run({ headers: request.headers }, () => {
+          const context: HandlerContext = {
           params,
           body: request.body,
           event: {
@@ -224,7 +225,9 @@ export function router(routes: RouteTable) {
             method: request.method,
             path: request.path,
           },
-        }));
+          };
+          return authorize?.(context) || entry.handler(context);
+        });
       }
       return error('Rota não encontrada', 404);
     },

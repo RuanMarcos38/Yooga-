@@ -90,3 +90,11 @@ Essas URLs contêm token secreto. Nunca coloque esses valores no código, README
 - O backend grava dados e imagens em `/data`; por isso o volume persistente é obrigatório.
 - As imagens enviadas no cardápio ficam disponíveis em `/uploads/...` no domínio do backend.
 - A API aberta continua protegida por `x-api-key`, criada em `Configurações > API Aberta`.
+# Acesso administrativo
+
+Antes de publicar em produção, configure `ADMIN_PASSWORD` no ambiente do serviço backend com uma senha forte. `ADMIN_EMAIL` é opcional e define o e-mail do administrador principal. A senha de demonstração não é aceita em produção.
+
+As rotas internas e a interface administrativa exigem perfil `Administrador` ou `Super Admin`. Clientes, visitantes, gestores e operadores não têm acesso às informações internas. O portal da mesa usa respostas limitadas ao atendimento e o assistente público opera sempre no modo cliente.
+
+Configure `AUTH_SECRET` com um segredo privado ou mantenha o volume persistente em `DATA_DIR`; na ausência dessa variável, o backend gera e persiste um segredo exclusivo para as sessões. Sessões antigas assinadas com o segredo público de demonstração deixam de funcionar e exigem novo login.
+

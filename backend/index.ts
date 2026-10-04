@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { ai, db, storage, router, json, error, currentRequestHeaders } from './appdeploy-compat.js';
+import { sessionSigningSecret } from './session-secret.js';
 
 type P = {
   id: string;
@@ -601,7 +602,7 @@ function sessionFromAuthorization() {
   const token = String(authorization).replace(/^Bearer\s+/i, '').trim();
   if (!token || !token.includes('.')) return null;
   const [base, signature] = token.split('.');
-  const expected = createHash('sha256').update(base + (process.env.AUTH_SECRET || 'tapfood-auth-secret')).digest('base64url');
+  const expected = createHash('sha256').update(base + sessionSigningSecret()).digest('base64url');
   if (signature !== expected) return null;
   try {
     const payload = JSON.parse(Buffer.from(base, 'base64url').toString('utf8')) as {
@@ -616,7 +617,7 @@ function sessionFromAuthorization() {
       unitName?: string;
       expiresAt?: string;
     };
-    if (payload.expiresAt && Date.parse(payload.expiresAt) < Date.now()) return null;
+    if (!payload.expiresAt || !Number.isFinite(Date.parse(payload.expiresAt)) || Date.parse(payload.expiresAt) < Date.now()) return null;
     return payload;
   } catch {
     return null;
@@ -666,7 +667,7 @@ function tableLoginPassword(tableName: string) {
 
 function signSession(payload: Record<string, unknown>) {
   const base = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = createHash('sha256').update(base + (process.env.AUTH_SECRET || 'tapfood-auth-secret')).digest('base64url');
+  const signature = createHash('sha256').update(base + sessionSigningSecret()).digest('base64url');
   return base + '.' + signature;
 }
 
@@ -1128,20 +1129,10 @@ async function publicTrackingConfig(tenantId = currentTenantId(), unitId = curre
   const integrations = await listIntegrationConfigs(tenantId, unitId);
   const ga = integrations.find(item => item.id === 'google-analytics' && item.enabled && item.status === 'Ativo');
   const pixel = integrations.find(item => item.id === 'facebook-pixel' && item.enabled && item.status === 'Ativo');
-  const webhook = integrations.find(item => item.id === 'n8n' && item.enabled && item.status === 'Ativo');
-  const metaCapi = integrations.find(item => item.id === 'meta-capi' && item.enabled && item.status === 'Ativo');
 
   return {
     googleAnalytics: ga?.fields?.measurementId ? { measurementId: ga.fields.measurementId } : null,
     metaPixel: pixel?.fields?.pixelId ? { pixelId: pixel.fields.pixelId } : null,
-    webhook: {
-      enabled: Boolean(webhook),
-      provider: webhook ? 'n8n' : null,
-      signed: Boolean(firstEnv('TAPFOOD_WEBHOOK_SECRET', 'N8N_WEBHOOK_SECRET', 'WEBHOOK_SECRET')),
-    },
-    metaConversionsApi: {
-      enabled: Boolean(metaCapi),
-    },
     generatedAt: new Date().toISOString(),
   };
 }
@@ -1396,8 +1387,6 @@ export const handler = router({
   'GET /api/_healthcheck': [async () => json({
     message: 'Success',
     service: 'TAPFOOD Backend',
-    version: '2026.09.20',
-    modules: ['auth', 'state', 'orders', 'tables', 'cash', 'catalog', 'stock', 'finance', 'customer', 'companies', 'users', 'audit', 'integrations', 'n8n', 'printers', 'open-api', 'reports', 'exports', 'qa', 'support'],
   })],
 
   'GET /api/public/tracking': [async () => json(await publicTrackingConfig())],
@@ -1508,7 +1497,8 @@ export const handler = router({
     }
 
     const adminEmail = (process.env.ADMIN_EMAIL || 'admin@tapfood.com.br').toLowerCase();
-    const adminPassword = process.env.ADMIN_PASSWORD || 'TapFood@2026';
+    const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'TapFood@2026');
+    if (!adminPassword) return error('Acesso administrativo não configurado', 503);
     if (email !== adminEmail || password !== adminPassword) {
       return error('Credenciais inválidas', 401);
     }
@@ -2306,7 +2296,9 @@ export const handler = router({
       history?: Array<{ role?: string; content?: string }>;
     };
 
-    const mode = value.mode === 'customer' ? 'customer' : 'establishment';
+    const session = sessionFromAuthorization();
+    const admin = session?.mode === 'empresa' && ['Administrador', 'Super Admin'].includes(session.role || '');
+    const mode = value.mode === 'customer' || !admin ? 'customer' : 'establishment';
     const message = typeof value.message === 'string' ? value.message.trim().slice(0, 1200) : '';
     if (!message) return error('Mensagem obrigatória', 400);
 
@@ -2380,7 +2372,11 @@ export const handler = router({
     const publicState = await withSignedImages(current.state);
     const orders = current.state.orders
       .filter(order => table.status !== 'Livre' && order.table === table.name && !['Finalizado', 'Cancelado'].includes(order.status))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(order => ({ id: order.id, code: order.code, channel: order.channel, table: order.table,
+        items: order.items, total: order.total, status: order.status, createdAt: order.createdAt,
+        updatedAt: order.updatedAt, startedAt: order.startedAt, readyAt: order.readyAt,
+        deliveredAt: order.deliveredAt, paymentMethod: order.paymentMethod }));
     const pendingRequests = current.state.serviceRequests.filter(request => request.table === table.name && request.status === 'pending');
     const menuCategories = publicState.menuCategories
       .filter(category => category.active)
@@ -2399,7 +2395,7 @@ export const handler = router({
         name: product.name,
         category: product.category,
         price: product.price,
-        stock: product.stock,
+        available: product.stock > 0,
         active: product.active,
         description: product.description || '',
         featured: product.featured || false,
@@ -2424,7 +2420,7 @@ export const handler = router({
         brandSupportPhone: current.state.settings.brandSupportPhone || '',
         hideTapfoodBranding: current.state.settings.hideTapfoodBranding,
       },
-      table,
+      table: { id: table.id, name: table.name, seats: table.seats, status: table.status, total: table.total },
       orders,
       pendingRequests,
       menuCategories,
@@ -2476,7 +2472,7 @@ export const handler = router({
     audit(current.state, 'order', order.id, 'Pedido enviado pelo cliente', order.code + ' · ' + table.name, 'Cliente');
     await save(current.id, current.state, tenantId, unitId);
     await notifyN8n(current.state, 'order.created_from_customer', { order, table }, tenantId, unitId);
-    return json(order, 201);
+    return json({ id: order.id, code: order.code, status: order.status, items: order.items, total: order.total, createdAt: order.createdAt }, 201);
   }],
 
   'POST /api/customer/table/:code/register': [async ({ params, body }) => {
@@ -2518,7 +2514,7 @@ export const handler = router({
     audit(current.state, 'customer', customer.id, 'Cliente conectado à mesa', customer.name + ' · ' + table.name, 'Cliente');
     await save(current.id, current.state, tenantId, unitId);
     await notifyN8n(current.state, 'customer.registered', { customer, table }, tenantId, unitId);
-    return json(customer, 201);
+    return json({ name: customer.name, phone: customer.phone, email: customer.email }, 201);
   }],
 
   'POST /api/customer/table/:code/payment': [async ({ params, body }) => {
@@ -3002,4 +2998,18 @@ export const handler = router({
     await save(current.id, current.state);
     return json(current.state.settings);
   }],
+}, ({ event }) => {
+  const route = event.method.toUpperCase() + ' ' + event.path.replace(/\/+$/, '');
+  const publicRoutes = new Set([
+    'POST /api/auth/login', 'GET /api/_healthcheck', 'GET /api/public/tracking',
+    'POST /api/assistant', 'GET /api/open/v1/health', 'GET /api/open/v1/menu',
+    'GET /api/open/v1/tables', 'GET /api/open/v1/orders', 'POST /api/open/v1/orders',
+  ]);
+  if (publicRoutes.has(route) || /^\/api\/customer\/table\//.test(event.path)) return null;
+  const session = sessionFromAuthorization();
+  if (!session) return error('Autenticação obrigatória', 401);
+  if (session.mode !== 'empresa' || !['Administrador', 'Super Admin'].includes(session.role || '')) {
+    return error('Acesso exclusivo de administradores', 403);
+  }
+  return null;
 });

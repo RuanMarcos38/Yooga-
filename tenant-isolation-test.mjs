@@ -139,14 +139,16 @@ const customerOrder = await call(
   '/api/customer/table/' + encodeURIComponent(accessA.token) + '/orders',
   { customer: 'Cliente QA', items: [{ productId: activeProductA.id, qty: 1 }] }
 );
-if (customerOrder.companyId !== companyA.id || customerOrder.unitId !== unitA1.id || customerOrder.tableId !== publicTableA.table.id) {
-  throw new Error('Customer order was not bound to the correct company/unit/table');
-}
+if ('companyId' in customerOrder || 'unitId' in customerOrder || 'createdBy' in customerOrder) throw new Error('Internal order metadata exposed to customer');
 
 const versionAfter = await call('GET', '/api/state/version', undefined, loginA.token);
 if (versionBefore.version === versionAfter.version) throw new Error('State version did not change after customer order');
 
 const stateAAfter = await call('GET', '/api/state', undefined, loginA.token);
+const storedCustomerOrder = stateAAfter.orders.find(order => order.id === customerOrder.id);
+if (storedCustomerOrder?.companyId !== companyA.id || storedCustomerOrder?.unitId !== unitA1.id || storedCustomerOrder?.tableId !== publicTableA.table.id) {
+  throw new Error('Customer order was not bound to the correct company/unit/table');
+}
 const stateA2After = await call('GET', '/api/state', undefined, loginA2.token);
 const stateBAfter = await call('GET', '/api/state', undefined, loginB.token);
 if (!stateAAfter.orders.some(order => order.id === customerOrder.id)) throw new Error('Primary unit did not receive its customer order');

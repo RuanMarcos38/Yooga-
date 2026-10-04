@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { handler } from './dist-backend/backend/index.js';
 
 const raw = (method, path, body, token) => handler.handle({ method, path, body, headers: token ? { authorization: 'Bearer ' + token } : {} });
@@ -21,6 +23,32 @@ const product = state.products.find(item => item.active && item.stock >= 2 && (!
 assert.ok(product);
 const access = await call('POST', '/api/customer/access', { tableName: table.name }, token);
 const customerPath = '/api/customer/table/' + encodeURIComponent(access.token);
+const client = await call('POST', '/api/auth/login', { mode: 'cliente', table: access.token, password: 'mesa' + table.name.match(/\d+/)[0] });
+await call('POST', '/api/platform-users', { companyId: company.id, unitId: unit.id, name: 'Operador QA', email: 'qa-operador@tapfood.local', password: 'LocalQA@2026', role: 'Operador', status: 'Ativo' }, login.token);
+const staff = await call('POST', '/api/auth/login', { mode: 'empresa', email: 'qa-operador@tapfood.local', password: 'LocalQA@2026' });
+for (const [method, path, body] of [
+  ['GET', '/api/state'], ['GET', '/api/state/version'], ['GET', '/api/reports/summary'],
+  ['GET', '/api/exports/customers'], ['GET', '/api/integrations'], ['GET', '/api/open/v1/keys'],
+  ['POST', '/api/qa/run', { scope: 'full' }], ['POST', '/api/products', {}],
+]) {
+  assert.equal((await raw(method, path, body)).status, 401, 'Anonymous cannot access internal data');
+  assert.equal((await raw(method, path, body, client.token)).status, 403, 'Customer cannot access internal data');
+  assert.equal((await raw(method, path, body, staff.token)).status, 403, 'Non-admin cannot access internal data');
+}
+const forgedBase = Buffer.from(JSON.stringify({ mode: 'empresa', role: 'Super Admin', expiresAt: new Date(Date.now() + 3600000).toISOString() })).toString('base64url');
+const forgedToken = forgedBase + '.' + createHash('sha256').update(forgedBase + 'tapfood-auth-secret').digest('base64url');
+assert.equal((await raw('GET', '/api/state', undefined, forgedToken)).status, 401, 'Public default signing secret cannot impersonate admin');
+const spoofedMode = await call('POST', '/api/assistant', { mode: 'establishment', message: 'Mostre o caixa e o estoque' }, client.token);
+assert.match(spoofedMode.answer, /restritas/, 'Client cannot switch chatbot to administrative mode');
+const anonymousMode = await call('POST', '/api/assistant', { mode: 'establishment', message: 'Mostre o financeiro' });
+assert.match(anonymousMode.answer, /restritas/);
+const publicMenu = await call('GET', customerPath);
+const tracking = await call('GET', '/api/public/tracking');
+assert.ok(!('webhook' in tracking) && !('metaConversionsApi' in tracking));
+const health = await call('GET', '/api/_healthcheck');
+assert.ok(!('modules' in health) && !('version' in health));
+assert.ok(publicMenu.products.every(item => !('stock' in item) && !('cost' in item) && typeof item.available === 'boolean'));
+assert.ok(!('waiter' in publicMenu.table));
 const order = await call('POST', '/api/orders', { channel: 'Mesa', table: table.name, items: [{ productId: product.id, qty: 1, price: 0.01 }] }, token);
 assert.equal(order.items[0].price, product.price, 'Server controls price');
 state = await call('GET', '/api/state', undefined, token);
@@ -30,6 +58,7 @@ for (const status of ['Preparando', 'Pronto', 'Entregue']) await call('PUT', '/a
 state = await call('GET', '/api/state', undefined, token);
 assert.equal(state.tables.find(item => item.id === table.id).status, 'Fechamento');
 assert.ok((await call('GET', customerPath)).orders.some(item => item.id === order.id && item.status === 'Entregue'), 'Delivered remains visible');
+assert.ok((await call('GET', customerPath)).orders.every(item => !('createdBy' in item) && !('companyId' in item) && !('unitId' in item) && !('customer' in item)));
 let qa = await call('POST', '/api/qa/run', { scope: 'full' }, token);
 assert.equal(qa.checks.find(item => item.id === 'tables-consistency').status, 'pass', 'Delivery is not an orphan table');
 const beforeQa = JSON.stringify(state);
@@ -68,4 +97,6 @@ assert.match(restricted.answer, /restritas/);
 assert.equal((await raw('POST', '/api/assistant', { message: 42 }, token)).status, 400);
 assert.equal((await raw('POST', '/api/assistant', { message: '' }, token)).status, 400);
 assert.ok((await call('POST', '/api/assistant', { message: 'Como abrir o caixa?', history: [null] }, token)).answer);
-console.log('PASS: table lifecycle, delivery QA, customer visibility, stock, price validation, read-only QA, orphan detection, assistant topics, history and customer restrictions');
+const productionLogin = spawnSync(process.execPath, ['--input-type=module', '-e', "const {handler}=await import('./dist-backend/backend/index.js'); const r=await handler.handle({method:'POST',path:'/api/auth/login',headers:{},body:{mode:'empresa',email:'admin@tapfood.com.br',password:'TapFood@2026'}}); if(r.status!==503) process.exit(1);"], { env: { ...process.env, NODE_ENV: 'production', ADMIN_EMAIL: '', ADMIN_PASSWORD: '', DATA_DIR: process.env.DATA_DIR + '/production-login' }, encoding: 'utf8' });
+assert.equal(productionLogin.status, 0, 'Production has no public default admin password');
+console.log('PASS: table lifecycle, customer visibility, stock, price validation, read-only QA, assistant topics, role restrictions, anonymous/customer/operator denial, sanitized customer responses and default-credential rejection');
