@@ -46,6 +46,11 @@ async function request<T = unknown>(method: string, path: string, body?: Request
     : await response.text();
 
   if (!response.ok) {
+    if (typeof window !== 'undefined' && headers.Authorization &&
+      [401, 403].includes(response.status) && path.startsWith('/api/state')) {
+      window.localStorage.removeItem('tapfood-auth-session');
+      window.location.replace('/');
+    }
     const message = typeof data === 'object' && data && 'message' in data
       ? String((data as { message?: unknown }).message)
       : 'Falha na comunicação com o servidor.';

@@ -2020,14 +2020,14 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
       <header className="border-b bg-[#fffefa] px-4 py-4 shadow-sm">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-full bg-[#f45f3f] text-white"><Utensils size={18} /></span>
-          <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · Modo Cliente · acesso limitado</small></div>
+          <div className="min-w-0 flex-1"><b className="block truncate">{data.store.restaurantName}</b><small className="text-slate-400">{data.store.unit} · Sua mesa</small></div>
           <button onClick={() => void enableNotifications()} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#276584]"><Bell size={14} className="mr-1 inline" />Notificações</button>
           {onLogout && <button onClick={onLogout} className="grid h-9 w-9 place-items-center rounded-xl border text-slate-500"><LogOut size={15} /></button>}
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl space-y-4 p-4">
-        <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] px-3 py-2 text-[10px] text-[#35667d]"><b>Interface do Cliente:</b> acesso limitado à própria mesa, acompanhamento do pedido, notificações e solicitação de atendimento. Caixa, estoque, relatórios e configurações não aparecem nesta interface.</div>
+        <div className="rounded-xl border border-[#d9e8ef] bg-[#eef7fb] px-3 py-2 text-[10px] text-[#35667d]">Acompanhe os pedidos da sua mesa e solicite atendimento quando precisar.</div>
         <section className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(46,42,38,0.05)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -2044,7 +2044,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
               <button disabled={customerSaving} className="rounded-xl bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white sm:col-span-3">{customerSaving ? 'Salvando...' : 'Salvar e receber avisos'}</button>
             </form>
           ) : (
-            <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] text-emerald-700">Pedido pronto, mudança de status e solicitações da mesa serão enviadas para o fluxo configurado no n8n quando a integração estiver ativa.</div>
+            <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] text-emerald-700">Acompanhe as atualizações do seu pedido nesta tela. Ative as notificações para receber avisos neste navegador.</div>
           )}
           {customerMessage && <p className="mt-2 text-[10px] text-slate-500">{customerMessage}</p>}
         </section>
