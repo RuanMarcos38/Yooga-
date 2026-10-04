@@ -29,3 +29,7 @@ jobs:
         run: npm run backend:build
       - name: Tenant isolation regression test
         run: node tenant-isolation-test.mjs
+      - name: Table lifecycle and assistant regression test
+        run: node operation-regression-test.mjs
+        env:
+          DATA_DIR: ${{ runner.temp }}/tapfood-operation-qa

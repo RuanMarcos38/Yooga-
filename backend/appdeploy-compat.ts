@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { assistantHelp } from './assistant-help.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
 type PersistedRecord<T> = T & { id: string };
@@ -171,11 +172,7 @@ export const storage = {
 export const ai = {
   async generate(options: { messages?: Array<{ role?: string; content?: string }>; system?: string; [key: string]: unknown }) {
     const lastMessage = options.messages?.slice().reverse().find(item => item.role === 'user')?.content?.trim();
-    const scope = options.system?.includes('Modo Cliente') ? 'cliente' : 'operacao';
-    const text = scope === 'cliente'
-      ? 'Posso ajudar com o acompanhamento do pedido, chamada do garçom e solicitação da conta. Para dados administrativos, fale com a equipe do estabelecimento.'
-      : 'Use o menu lateral para acessar o módulo desejado. Para pedidos, entre em Pedidos / PDV, selecione produtos e finalize. Para operação, acompanhe Mesas, KDS, Caixa, Estoque e Relatórios.';
-    return { text: lastMessage ? text + ' Pergunta recebida: "' + lastMessage.slice(0, 120) + '".' : text };
+    return { text: assistantHelp(lastMessage || '', Boolean(options.system?.includes('Modo Cliente'))) };
   },
 };
 

@@ -1048,7 +1048,7 @@ function OperationalDashboard(props: ViewProps) {
                 <button key={table.id} onClick={() => props.openTableOrder(table.name)} className={'relative rounded-xl border-2 p-3 text-left transition hover:-translate-y-0.5 ' + (hasAlert ? 'border-red-500 bg-red-50 shadow-[0_8px_20px_rgba(239,68,68,.12)]' : table.status === 'Livre' ? 'border-slate-200 bg-slate-50' : 'border-emerald-300 bg-emerald-50')}>
                   {hasAlert && <span className="absolute right-2 top-2 h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />}
                   <div className="flex items-center gap-2"><Utensils size={14} className={hasAlert ? 'text-red-600' : table.status === 'Livre' ? 'text-slate-400' : 'text-emerald-600'} /><b className="text-xs">{table.name}</b></div>
-                  <div className="mt-2 flex items-center justify-between text-[9px]"><span>{table.status}</span><span>{elapsed > 0 ? formatOperationalTime(elapsed) : 'Livre'}</span></div>
+                  <div className="mt-2 flex items-center justify-between text-[9px]"><span>{table.status}</span><span>{elapsed > 0 ? formatOperationalTime(elapsed) : table.status === 'Livre' ? 'Livre' : 'Sem preparo pendente'}</span></div>
                   {hasAlert && <div className="mt-2 rounded-lg bg-red-500 px-2 py-1.5 text-[9px] font-bold text-white">{requests.some(request => request.type === 'waiter') ? 'GARÇOM SOLICITADO' : 'CONTA SOLICITADA'}</div>}
                 </button>
               );

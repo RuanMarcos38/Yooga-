@@ -231,9 +231,9 @@ const defaultTables = (): T[] => Array.from({ length: 40 }, (_, index) => ({
   id: 't' + (index + 1),
   name: 'Mesa ' + String(index + 1).padStart(2, '0'),
   seats: index % 3 === 0 ? 6 : 4,
-  status: (index === 0 ? 'Ocupada' : index === 1 || index === 4 ? 'Aguardando' : 'Livre') as T['status'],
-  total: index === 0 ? 86.7 : index === 1 ? 49.8 : index === 4 ? 129.4 : 0,
-  waiter: index === 0 ? 'Marina' : index === 1 ? 'João' : index === 4 ? 'Carlos' : undefined,
+  status: (index === 0 ? 'Ocupada' : 'Livre') as T['status'],
+  total: index === 0 ? 83.8 : 0,
+  waiter: index === 0 ? 'Marina' : undefined,
 }));
 
 const productImages: Record<string, string> = {
@@ -2101,7 +2101,7 @@ export const handler = router({
 
       const occupiedWithoutOrder = state.tables.filter(table =>
         table.status !== 'Livre' &&
-        !state.orders.some(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+        !state.orders.some(order => order.table === table.name && !['Finalizado', 'Cancelado'].includes(order.status))
       );
       add(
         'tables-consistency',
@@ -2208,7 +2208,10 @@ export const handler = router({
           : 'Foram encontrados pedidos ou solicitações vinculados a mesas inexistentes.'
       );
 
-      const activeTableOrders = state.orders.filter(order => order.table && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status));
+      const activeTableOrders = state.orders.filter(order =>
+        order.table && !['Finalizado', 'Cancelado'].includes(order.status) &&
+        state.tables.some(table => table.name === order.table && table.status !== 'Livre')
+      );
       add(
         'customer-status-flow',
         'Modo Cliente',
@@ -2304,16 +2307,20 @@ export const handler = router({
     };
 
     const mode = value.mode === 'customer' ? 'customer' : 'establishment';
-    const message = value.message?.trim();
+    const message = typeof value.message === 'string' ? value.message.trim().slice(0, 1200) : '';
     if (!message) return error('Mensagem obrigatória', 400);
 
-    const safeHistory = (value.history || [])
+    const safeHistory = (Array.isArray(value.history) ? value.history : [])
       .slice(-8)
-      .filter(item => (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string')
+      .filter(item => item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string')
       .map(item => ({
         role: item.role as 'user' | 'assistant',
         content: String(item.content).slice(0, 1200),
       }));
+
+    if (safeHistory.at(-1)?.role !== 'user' || safeHistory.at(-1)?.content !== message) {
+      safeHistory.push({ role: 'user', content: message });
+    }
 
     const establishmentGuide = [
       'Dashboard: métricas de pedidos, mesas ocupadas, tempos, alertas e caixa.',
@@ -2372,7 +2379,7 @@ export const handler = router({
     if (!table) return error('Mesa não encontrada', 404);
     const publicState = await withSignedImages(current.state);
     const orders = current.state.orders
-      .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      .filter(order => table.status !== 'Livre' && order.table === table.name && !['Finalizado', 'Cancelado'].includes(order.status))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pendingRequests = current.state.serviceRequests.filter(request => request.table === table.name && request.status === 'pending');
     const menuCategories = publicState.menuCategories
@@ -2505,7 +2512,7 @@ export const handler = router({
     }
 
     current.state.orders
-      .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      .filter(order => table.status !== 'Livre' && order.table === table.name && !['Finalizado', 'Cancelado'].includes(order.status))
       .forEach(order => { order.customer = customer!.name; });
 
     audit(current.state, 'customer', customer.id, 'Cliente conectado à mesa', customer.name + ' · ' + table.name, 'Cliente');
@@ -2532,7 +2539,7 @@ export const handler = router({
     if (!allowed) return error('Forma de pagamento indisponível neste estabelecimento', 400);
 
     current.state.orders
-      .filter(order => order.table === table.name && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status))
+      .filter(order => table.status !== 'Livre' && order.table === table.name && !['Finalizado', 'Cancelado'].includes(order.status))
       .forEach(order => { order.paymentMethod = method; order.updatedAt = new Date().toISOString(); });
 
     let request = current.state.serviceRequests.find(item => item.table === table.name && item.type === 'bill' && item.status === 'pending');
@@ -2782,6 +2789,13 @@ export const handler = router({
     if (!table || !value.status || !allowedTableStatuses.has(value.status)) return error('Mesa/status inválido', 400);
     table.status = value.status;
     if (value.status === 'Livre') {
+      const changedAt = new Date().toISOString();
+      current.state.orders
+        .filter(order => order.table === table.name && !['Finalizado', 'Cancelado'].includes(order.status))
+        .forEach(order => { order.status = 'Finalizado'; order.updatedAt = changedAt; });
+      current.state.serviceRequests
+        .filter(request => request.table === table.name && request.status === 'pending')
+        .forEach(request => { request.status = 'resolved'; request.resolvedAt = changedAt; });
       table.total = 0;
       table.waiter = undefined;
     }
