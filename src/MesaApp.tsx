@@ -1252,7 +1252,33 @@ function InvoicePanel(props: ViewProps) {
   );
 }
 
+function TableCustomerQrModal({ tableName, onClose }: { tableName: string; onClose: () => void }) {
+  const [link, setLink] = useState('');
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setLink(''); setError(''); setCopied(false);
+    signedCustomerLink(tableName).then(value => { if (active) setLink(value); }).catch(() => { if (active) setError('Não foi possível gerar o acesso. Tente novamente.'); });
+    return () => { active = false; };
+  }, [tableName, attempt]);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(link); setCopied(true); setError(''); }
+    catch { setCopied(false); setError('Não foi possível copiar automaticamente. Selecione e copie o link abaixo.'); }
+  };
+  return <Modal title={'Conectar cliente · ' + tableName} onClose={onClose}>
+    <p className="mb-4 text-sm text-slate-500">Peça ao cliente para escanear o QR Code ou envie o link da mesa.</p>
+    <div className="grid min-h-[250px] place-items-center rounded-xl border bg-white p-4">{link ? <QRCodeSVG value={link} size={220} level="M" includeMargin title={'Acesso do cliente · ' + tableName} /> : <p role="status" className="text-sm text-slate-500">{error ? 'QR Code indisponível' : 'Gerando QR Code...'}</p>}</div>
+    {link && <label className="mt-4 block text-xs font-semibold">Link da mesa<input aria-label="Link da mesa" readOnly value={link} onFocus={event => event.currentTarget.select()} className="control mt-2 w-full" /></label>}
+    {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
+    <p role="status" aria-live="polite" className="mt-2 text-sm text-emerald-700">{copied ? 'Link copiado!' : ''}</p>
+    <div className="mt-4 flex flex-wrap gap-2"><button disabled={!link} onClick={() => void copy()} className="rounded-xl bg-[#159fe5] px-4 py-3 text-sm font-bold text-white disabled:opacity-40">Copiar link</button>{!link && error && <button onClick={() => setAttempt(value => value + 1)} className="rounded-xl border px-4 py-3 text-sm">Tentar novamente</button>}<button onClick={onClose} className="rounded-xl border px-4 py-3 text-sm">Fechar</button></div>
+  </Modal>;
+}
+
 function TableOrderWorkspace(props: ViewProps) {
+  const [customerQrOpen, setCustomerQrOpen] = useState(false);
   const fee = props.data.settings.automaticServiceFee ? props.subtotal * (props.data.settings.serviceFee / 100) : 0;
   const total = props.subtotal + fee;
   const categoryImage = (name: string) => props.data.menuCategories.find(item => item.name === name)?.imageUrl || categoryPhoto(name);
@@ -1288,15 +1314,7 @@ function TableOrderWorkspace(props: ViewProps) {
           <Search size={18} className="text-[#50585c]" />
         </label>
         <button onClick={() => props.setPage('history')} className="grid h-11 w-11 place-items-center rounded-full text-[#535c60] hover:bg-white"><History size={20} /></button>
-        <button onClick={async () => {
-          try {
-            const link = await signedCustomerLink(props.table);
-            await navigator.clipboard.writeText(link);
-            alert('Link seguro do cliente copiado: ' + link);
-          } catch (err) {
-            alert(err instanceof Error ? err.message : 'Não foi possível gerar o acesso do cliente.');
-          }
-        }} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#246486]">Conectar cliente</button>
+        <button onClick={() => setCustomerQrOpen(true)} className="rounded-xl bg-[#eef7fb] px-3 py-2 text-[10px] font-semibold text-[#246486]">Conectar cliente</button>
       </div>
 
       <div className="grid min-h-[620px] gap-4 xl:grid-cols-[330px_1fr]">
@@ -1418,6 +1436,7 @@ function TableOrderWorkspace(props: ViewProps) {
           <button disabled={!props.cart.length} onClick={() => void props.finishOrder()} className="mt-4 w-full rounded-xl bg-[#7dc8ef] py-4 text-sm font-semibold text-[#175071] disabled:opacity-40">Salvar</button>
         </section>
       </div>
+      {customerQrOpen && <TableCustomerQrModal tableName={props.table} onClose={() => setCustomerQrOpen(false)} />}
     </div>
   );
 }
@@ -2463,6 +2482,7 @@ function PayButton({ label, icon, active, onClick }: { label: string; icon: Reac
 }
 
 function TablesView(props: ViewProps) {
+  const [customerQrTable, setCustomerQrTable] = useState('');
   const pendingFor = (tableName: string) => props.data.serviceRequests.filter(request => request.table === tableName && request.status === 'pending');
 
   const statusTheme = (status: Table['status']) => {
@@ -2483,15 +2503,7 @@ function TablesView(props: ViewProps) {
     };
   };
 
-  const copyCustomerLink = async (tableName: string) => {
-    try {
-      const link = await signedCustomerLink(tableName);
-      await navigator.clipboard.writeText(link);
-      alert('Link seguro do cliente copiado: ' + link);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Não foi possível gerar o acesso do cliente.');
-    }
-  };
+  const copyCustomerLink = (tableName: string) => setCustomerQrTable(tableName);
 
   const callWaiter = async (tableName: string) => {
     await props.run(async () => {
@@ -2589,6 +2601,7 @@ function TablesView(props: ViewProps) {
           );
         })}
       </div>
+      {customerQrTable && <TableCustomerQrModal tableName={customerQrTable} onClose={() => setCustomerQrTable('')} />}
     </section>
   );
 }
