@@ -33,3 +33,7 @@ jobs:
         run: node operation-regression-test.mjs
         env:
           DATA_DIR: ${{ runner.temp }}/tapfood-operation-qa
+      - name: Button actions and validation regression test
+        run: node button-regression-test.mjs
+        env:
+          DATA_DIR: ${{ runner.temp }}/tapfood-buttons-qa

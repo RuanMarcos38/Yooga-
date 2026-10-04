@@ -483,7 +483,7 @@ type CustomerAccessPayload = {
 };
 
 function customerAccessSecret() {
-  return process.env.CUSTOMER_QR_SECRET || process.env.AUTH_SECRET || 'tapfood-auth-secret';
+  return process.env.CUSTOMER_QR_SECRET || sessionSigningSecret();
 }
 
 function signCustomerAccess(payload: CustomerAccessPayload) {
@@ -1429,9 +1429,11 @@ export const handler = router({
 
   'POST /api/customer/access': [async ({ body }) => {
     const session = sessionFromAuthorization();
-    if (!session || session.mode !== 'empresa' || !session.companyId || !session.unitId) return error('Acesso empresarial/unidade obrigatório', 401);
+    if (!session || session.mode !== 'empresa' || (session.role !== 'Super Admin' && (!session.companyId || !session.unitId))) return error('Acesso empresarial/unidade obrigatório', 401);
     const value = body as { tableId?: string; tableName?: string };
-    const current = await get(session.companyId, session.unitId);
+    const companyId = session.companyId || '__master__';
+    const unitId = session.unitId || '';
+    const current = await get(companyId, unitId);
     const table = current.state.tables.find(item =>
       (value.tableId && item.id === value.tableId) ||
       (value.tableName && item.name.toLowerCase() === String(value.tableName).trim().toLowerCase())
@@ -1439,13 +1441,13 @@ export const handler = router({
     if (!table) return error('Mesa não encontrada', 404);
     const token = signCustomerAccess({
       v: 2,
-      companyId: session.companyId,
-      unitId: session.unitId,
+      companyId,
+      unitId: unitId || undefined,
       unitName: session.unitName || current.state.settings.unit,
       tableId: table.id,
       tableName: table.name,
     });
-    return json({ token, tableId: table.id, tableName: table.name, companyId: session.companyId, unitId: session.unitId, unitName: session.unitName || current.state.settings.unit });
+    return json({ token, tableId: table.id, tableName: table.name, companyId, unitId, unitName: session.unitName || current.state.settings.unit });
   }],
 
   'POST /api/auth/login': [async ({ body }) => {

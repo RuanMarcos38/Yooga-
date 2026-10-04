@@ -146,7 +146,7 @@ type State = {
   settings: AppSettings;
 };
 type ExportFile = { filename: string; contentType: string; content: string };
-type OrderDetails = Order & { events?: AuditEvent[]; table?: Table | null };
+type OrderDetails = Omit<Order, 'table'> & { events?: AuditEvent[]; table?: Table | null };
 type ReportSummary = {
   generatedAt: string;
   revenue: number;
@@ -610,7 +610,11 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [settingsForm, setSettingsForm] = useState<AppSettings>(defaultSettings);
-  const seededCart = useRef(false);
+  const settingsDirty = useRef(false);
+  const editSettingsForm = (value: AppSettings) => {
+    settingsDirty.current = true;
+    setSettingsForm(value);
+  };
   const lastStateVersion = useRef('');
 
   const setPage = (nextPage: Page) => {
@@ -622,21 +626,14 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
     window.scrollTo({ top: 0 });
   };
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (initial = false) => {
+    if (initial) setLoading(true);
     try {
       const response = await api.get('/api/state');
       const state = response.data as State;
       setData(state);
       setSettingsForm(state.settings);
-      if (!seededCart.current && state.products.length >= 3) {
-        setCart([
-          { productId: state.products[0].id, name: state.products[0].name, qty: 1, price: state.products[0].price },
-          { productId: state.products[1].id, name: state.products[1].name, qty: 1, price: state.products[1].price },
-          { productId: state.products[4]?.id || state.products[2].id, name: state.products[4]?.name || state.products[2].name, qty: 1, price: state.products[4]?.price || state.products[2].price },
-        ]);
-        seededCart.current = true;
-      }
+      settingsDirty.current = false;
       setError('');
     } catch {
       setError('Não foi possível carregar os dados do sistema.');
@@ -645,7 +642,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(true); }, []);
   useEffect(() => {
     const handlePopState = () => setPageState(pageFromPath(window.location.pathname));
     window.addEventListener('popstate', handlePopState);
@@ -662,7 +659,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
         if (!lastStateVersion.current || lastStateVersion.current !== version) {
           const response = await api.get('/api/state');
           setData(response.data as State);
-          setSettingsForm((response.data as State).settings);
+          if (!settingsDirty.current) setSettingsForm((response.data as State).settings);
           lastStateVersion.current = version;
         }
       } catch {
@@ -688,8 +685,10 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
       await load();
       setToast(message);
       setError('');
+      return true;
     } catch {
       setError('Não foi possível concluir a operação.');
+      return false;
     }
   };
 
@@ -731,7 +730,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
       setError('Selecione uma mesa antes de finalizar.');
       return;
     }
-    await run(
+    const saved = await run(
       () => api.post('/api/orders', {
         channel,
         table: channel === 'Mesa' ? table : undefined,
@@ -741,6 +740,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
       }),
       'Pedido criado e enviado para a cozinha.'
     );
+    if (!saved) return;
     setCart([]);
     setTable('');
   };
@@ -839,7 +839,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
               run={run}
               search={search}
               settingsForm={settingsForm}
-              setSettingsForm={setSettingsForm}
+              setSettingsForm={editSettingsForm}
               setPage={setPage}
               openTableOrder={openTableOrder}
               session={session}
@@ -885,7 +885,7 @@ type ViewProps = {
   changeQty: (id: string, delta: number) => void;
   removeItem: (id: string) => void;
   finishOrder: () => Promise<void>;
-  run: (fn: () => Promise<unknown>, message: string) => Promise<void>;
+  run: (fn: () => Promise<unknown>, message: string) => Promise<boolean>;
   search: string;
   settingsForm: AppSettings;
   setSettingsForm: (value: AppSettings) => void;
@@ -1580,7 +1580,7 @@ function ProductEditor({ product, categories, run, onClose }: { product: Product
 
   const save = async () => {
     if (!form.name.trim() || form.price <= 0) return;
-    await run(async () => {
+    const saved = await run(async () => {
       const payload = {
         name: form.name.trim(),
         category: form.category,
@@ -1609,7 +1609,7 @@ function ProductEditor({ product, categories, run, onClose }: { product: Product
         await api.post('/api/products/' + id + '/image', image);
       }
     }, product ? 'Produto atualizado.' : 'Produto cadastrado.');
-    onClose();
+    if (saved) onClose();
   };
 
   return (
@@ -1667,7 +1667,7 @@ function CategoryEditor({ category, run, onClose }: { category: MenuCategory | n
 
   const save = async () => {
     if (!name.trim()) return;
-    await run(async () => {
+    const saved = await run(async () => {
       let id = category?.id;
       const payload = { name: name.trim(), order: Number(order), active, imageUrl };
       if (id) {
@@ -1681,7 +1681,7 @@ function CategoryEditor({ category, run, onClose }: { category: MenuCategory | n
         await api.post('/api/menu/categories/' + id + '/image', image);
       }
     }, category ? 'Categoria atualizada.' : 'Categoria cadastrada.');
-    onClose();
+    if (saved) onClose();
   };
 
   return (
@@ -1729,7 +1729,7 @@ async function compressImage(file: File): Promise<{ content: string; contentType
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return <div className="fixed inset-0 z-[80] grid place-items-center bg-black/35 p-4"><div className="w-full max-w-3xl rounded-2xl bg-[#fffefa] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-bold">{title}</h3><button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-sm">×</button></div>{children}</div></div>;
+  return <div className="fixed inset-0 z-[80] grid place-items-center bg-black/35 p-4"><div role="dialog" aria-modal="true" aria-label={title} className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl bg-[#fffefa] p-5 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-bold">{title}</h3><button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-sm">×</button></div>{children}</div></div>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -2239,6 +2239,11 @@ type QaReport = {
 
 function AiAssistant({ mode, page, table }: { mode: 'establishment' | 'customer'; page?: Page; table?: string }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const openAssistant = () => setOpen(true);
+    window.addEventListener('tapfood:open-assistant', openAssistant);
+    return () => window.removeEventListener('tapfood:open-assistant', openAssistant);
+  }, []);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [qaMode, setQaMode] = useState(false);
@@ -2602,10 +2607,11 @@ function HistoryView(props: ViewProps) {
       setHistoryMessage('Informe descrição e valor válido.');
       return;
     }
-    await props.run(
+    const saved = await props.run(
       () => api.post('/api/transactions', { ...movementForm, amount }),
       movementForm.type === 'Entrada' ? 'Entrada adicionada ao caixa.' : 'Saída adicionada ao caixa.'
     );
+    if (!saved) return;
     setMovementOpen(false);
     setHistoryMessage('');
   };
@@ -2640,7 +2646,7 @@ function HistoryView(props: ViewProps) {
   };
 
   const filteredOrders = props.data.orders.filter(order => {
-    const target = [order.customer, order.code, order.channel, order.paymentMethod, order.table].filter(Boolean).join(' ').toLowerCase();
+    const target = [order.customer, order.code, order.channel, order.paymentMethod, order.table, BRL(order.total), order.total.toFixed(2), order.total.toFixed(2).replace('.', ',')].filter(Boolean).join(' ').toLowerCase();
     return !query || target.includes(query.toLowerCase());
   });
 
@@ -2766,7 +2772,7 @@ function HistoryView(props: ViewProps) {
         <Modal title={'Pedido ' + orderDetails.code} onClose={() => setOrderDetails(null)}>
           <div className="grid gap-3 sm:grid-cols-2">
             <MiniStat label="Cliente" value={orderDetails.customer || 'Cliente balcão'} />
-            <MiniStat label="Canal" value={orderDetails.channel + (orderDetails.table ? ' · ' + orderDetails.table : '')} />
+            <MiniStat label="Canal" value={orderDetails.channel + (orderDetails.table ? ' · ' + orderDetails.table.name : '')} />
             <MiniStat label="Status" value={orderDetails.status} />
             <MiniStat label="Total" value={BRL(orderDetails.total)} />
           </div>
@@ -2909,7 +2915,7 @@ function ProductsView(props: ViewProps) {
   const saveQuickUpload = async () => {
     if (!quickUploadProductId || !quickUploadFile) return;
     const image = await compressImage(quickUploadFile);
-    await props.run(() => api.post('/api/products/' + quickUploadProductId + '/image', image), 'Foto do produto atualizada.');
+    if (!await props.run(() => api.post('/api/products/' + quickUploadProductId + '/image', image), 'Foto do produto atualizada.')) return;
     setQuickUploadOpen(false);
     setQuickUploadFile(null);
   };
@@ -2998,7 +3004,7 @@ function StockView(props: ViewProps) {
       setStockMessage('Informe uma quantidade válida. Use valor negativo para saída.');
       return;
     }
-    await props.run(() => api.post('/api/stock/' + adjusting.id + '/adjust', { delta: parsed }), 'Estoque atualizado.');
+    if (!await props.run(() => api.post('/api/stock/' + adjusting.id + '/adjust', { delta: parsed }), 'Estoque atualizado.')) return;
     setAdjusting(null);
     setDelta('');
   };
@@ -3058,7 +3064,7 @@ function FinanceView(props: ViewProps) {
       setFinanceMessage('Preencha descrição e valor válido.');
       return;
     }
-    await props.run(() => api.post('/api/transactions', { ...form, amount }), 'Lançamento financeiro criado.');
+    if (!await props.run(() => api.post('/api/transactions', { ...form, amount }), 'Lançamento financeiro criado.')) return;
     setOpen(false);
     setForm({ description: '', type: 'Entrada', amount: '', category: 'Receitas' });
     setFinanceMessage('');
@@ -3111,7 +3117,7 @@ function CustomersView(props: ViewProps) {
   const [form, setForm] = useState({ name: '', phone: '', email: '' });
   const create = async () => {
     if (!form.name.trim() || !form.phone.trim()) return;
-    await props.run(() => api.post('/api/customers', form), 'Cliente cadastrado e notificação enviada.');
+    if (!await props.run(() => api.post('/api/customers', form), 'Cliente cadastrado.')) return;
     setForm({ name: '', phone: '', email: '' });
     setOpen(false);
   };
@@ -3813,21 +3819,6 @@ function SettingsView(props: ViewProps) {
             {companies.length === 0 && <div className="py-8 text-center text-xs text-slate-400">Nenhuma empresa cadastrada.</div>}
           </div>
         </Surface>
-        {unitOpen && (
-          <Modal title={editingUnit ? 'Editar unidade' : 'Cadastrar unidade'} onClose={() => setUnitOpen(false)}>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {props.session.role === 'Super Admin' && <Field label="Empresa"><select value={unitForm.companyId} onChange={e => setUnitForm({ ...unitForm, companyId: e.target.value })} className="control"><option value="">Selecione</option>{companies.filter(company => company.status !== 'Inativa').map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>}
-              <Field label="Nome da unidade"><input value={unitForm.name} onChange={e => setUnitForm({ ...unitForm, name: e.target.value })} placeholder="Ex.: Joinville Centro" className="control" /></Field>
-              <div className="sm:col-span-2"><Field label="Endereço da unidade"><input value={unitForm.address} onChange={e => setUnitForm({ ...unitForm, address: e.target.value })} placeholder="Rua, número, bairro, cidade, UF e CEP" className="control" /></Field></div>
-              <Field label="Telefone"><input value={unitForm.phone} onChange={e => setUnitForm({ ...unitForm, phone: e.target.value })} className="control" /></Field>
-              <Field label="E-mail"><input type="email" value={unitForm.email} onChange={e => setUnitForm({ ...unitForm, email: e.target.value })} className="control" /></Field>
-              <Field label="Status"><select value={unitForm.status} onChange={e => setUnitForm({ ...unitForm, status: e.target.value as UnitInfo['status'] })} className="control"><option>Ativa</option><option>Inativa</option></select></Field>
-            </div>
-            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Esta unidade terá mesas, QR Codes, pedidos, caixa, estoque, integrações e operação isolados das outras unidades da mesma empresa.</div>
-            <div className="mt-5 flex justify-end gap-2"><button onClick={() => setUnitOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void saveUnit()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar unidade</button></div>
-          </Modal>
-        )}
-
         {companyOpen && (
           <Modal title={editingCompany ? 'Editar empresa' : 'Cadastrar empresa'} onClose={() => setCompanyOpen(false)}>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -3948,6 +3939,21 @@ function SettingsView(props: ViewProps) {
           </div>
         </div>
 
+        {unitOpen && (
+          <Modal title={editingUnit ? 'Editar unidade' : 'Cadastrar unidade'} onClose={() => setUnitOpen(false)}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {props.session.role === 'Super Admin' && <Field label="Empresa"><select value={unitForm.companyId} onChange={e => setUnitForm({ ...unitForm, companyId: e.target.value })} className="control"><option value="">Selecione</option>{companies.filter(company => company.status !== 'Inativa').map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></Field>}
+              <Field label="Nome da unidade"><input value={unitForm.name} onChange={e => setUnitForm({ ...unitForm, name: e.target.value })} placeholder="Ex.: Joinville Centro" className="control" /></Field>
+              <div className="sm:col-span-2"><Field label="Endereço da unidade"><input value={unitForm.address} onChange={e => setUnitForm({ ...unitForm, address: e.target.value })} placeholder="Rua, número, bairro, cidade, UF e CEP" className="control" /></Field></div>
+              <Field label="Telefone"><input value={unitForm.phone} onChange={e => setUnitForm({ ...unitForm, phone: e.target.value })} className="control" /></Field>
+              <Field label="E-mail"><input type="email" value={unitForm.email} onChange={e => setUnitForm({ ...unitForm, email: e.target.value })} className="control" /></Field>
+              <Field label="Status"><select value={unitForm.status} onChange={e => setUnitForm({ ...unitForm, status: e.target.value as UnitInfo['status'] })} className="control"><option>Ativa</option><option>Inativa</option></select></Field>
+            </div>
+            <div className="mt-3 rounded-xl border border-[#d9e8ef] bg-[#eef7fb] p-3 text-[10px] leading-4 text-[#35667d]">Esta unidade terá mesas, QR Codes, pedidos, caixa, estoque, integrações e operação isolados das outras unidades da mesma empresa.</div>
+            <div className="mt-5 flex justify-end gap-2"><button onClick={() => setUnitOpen(false)} className="rounded-xl border px-4 py-3 text-xs">Cancelar</button><button onClick={() => void saveUnit()} className="rounded-xl bg-[#159fe5] px-5 py-3 text-xs font-bold text-white">Salvar unidade</button></div>
+          </Modal>
+        )}
+
         {companyOpen && (
           <Modal title={editingCompany ? 'Editar empresa' : 'Cadastrar empresa'} onClose={() => setCompanyOpen(false)}>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -4045,7 +4051,7 @@ function SettingsView(props: ViewProps) {
       <section>
         <SettingsBack title="Diagnóstico TAPFOOD" onBack={showHub} subtitle="Atalhos para validar a operação" />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <PromoCard icon={<ShieldCheck size={19} />} title="Teste completo" subtitle="Abra a Central TAPFOOD no canto inferior e execute a verificação geral." action="Abrir central" onClick={() => window.scrollTo({ top: document.body.scrollHeight })} />
+          <PromoCard icon={<ShieldCheck size={19} />} title="Teste completo" subtitle="Abra a Central TAPFOOD e execute a verificação geral." action="Abrir central" onClick={() => window.dispatchEvent(new Event('tapfood:open-assistant'))} />
           <PromoCard icon={<Package size={19} />} title="Produtos com foto" subtitle="Complete imagens e disponibilidade do cardápio." action="Ver produtos" onClick={routeTile('products')} />
           <PromoCard icon={<Boxes size={19} />} title="Estoque mínimo" subtitle="Ajuste insumos que estiverem no limite." action="Ver estoque" onClick={routeTile('stock')} />
           <PromoCard icon={<Printer size={19} />} title="Impressoras" subtitle="Teste cozinha, balcão e bar." action="Configurar" onClick={() => setSection('print')} />
