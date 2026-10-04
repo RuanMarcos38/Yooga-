@@ -745,6 +745,9 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
     setTable('');
   };
 
+  const pendingTableRequests = data.serviceRequests.filter(request => request.status === 'pending');
+  const closingTableRequests = pendingTableRequests.filter(request => request.type === 'bill');
+
   const managedCategories = data.menuCategories
     .filter(item => item.active)
     .sort((a, b) => a.order - b.order)
@@ -793,7 +796,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           <button onClick={() => setOnlyAvailable(value => !value)} className={'hidden h-10 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white sm:flex ' + (onlyAvailable ? 'bg-[#d84f31]' : 'bg-[#f45f3f]')}>
             Filtro <SlidersHorizontal size={14} />
           </button>
-          <button title="Ver solicitações das mesas" onClick={() => setPage('tables')} className="ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} /></button>
+          <button title="Ver solicitações das mesas" aria-label={pendingTableRequests.length ? `Ver solicitações das mesas: ${pendingTableRequests.length} pendentes` : "Ver solicitações das mesas"} onClick={() => setPage('tables')} className="relative ml-auto grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-50"><Bell size={18} />{pendingTableRequests.length > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{pendingTableRequests.length}</span>}</button>
           <button onClick={onLogout} className="flex items-center gap-2 rounded-xl border border-[#e9eaf0] bg-[#f8f9fb] p-1.5 pr-3">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#ffe0d8] text-xs font-bold text-[#ef5a38]">{session.name.split(' ').map(part => part[0]).slice(0, 2).join('') || 'TF'}</span>
             <span className="hidden text-left md:block"><strong className="block text-[11px]">{session.name}</strong><small className="block text-[9px] text-slate-400">{session.companyName || 'TAPFOOD'} · {session.role} · {session.unitName || data.settings.unit}</small></span>
@@ -802,6 +805,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
         </header>
 
         <div className="p-4 md:p-6">
+          {closingTableRequests.length > 0 && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><Bell size={18} /><span className="flex-1"><b>Fechamento de mesa solicitado</b><span className="block text-xs">{closingTableRequests.map(request => request.table).join(", ")} · Confira a conta e o pagamento antes de liberar a mesa.</span></span><button onClick={() => setPage('tables')} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white">Ver solicitações</button></div>}
           {error && (
             <div className="mb-4 flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-700">
               <AlertTriangle size={17} /><span className="flex-1">{error}</span><button onClick={() => setError('')}>×</button>
@@ -1019,7 +1023,7 @@ function OperationalDashboard(props: ViewProps) {
               {[...pendingWaiter, ...pendingBills].slice(0, 8).map(request => (
                 <div key={request.id} className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
                   <span className="grid h-9 w-9 place-items-center rounded-full bg-red-100 text-red-600">{request.type === 'bill' ? <ReceiptText size={16} /> : <Bell size={16} />}</span>
-                  <span className="min-w-0 flex-1"><b className="block text-xs">{request.table}</b><small className="text-[9px] text-slate-400">{request.type === 'bill' ? 'Solicitou a conta' : 'Chamou o garçom'} · {formatOperationalTime(now - new Date(request.createdAt).getTime())}</small></span>
+                  <span className="min-w-0 flex-1"><b className="block text-xs">{request.table}</b><small className="text-[9px] text-slate-400">{request.type === 'bill' ? 'Solicitou fechar a mesa' : 'Chamou o garçom'} · {formatOperationalTime(now - new Date(request.createdAt).getTime())}</small></span>
                   <button onClick={() => void resolveRequest(request)} className="rounded-lg bg-red-500 px-3 py-2 text-[9px] font-bold text-white">Atender</button>
                 </div>
               ))}
@@ -1940,7 +1944,12 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   };
 
   const closeBill = async () => {
-    await sendRequest('bill');
+    try {
+      await sendRequest('bill');
+    } catch {
+      setError('Não foi possível solicitar o fechamento. Tente novamente.');
+      return;
+    }
     setPostOrderOpen(false);
     setPaymentChoiceOpen(false);
     setCustomerFlowComplete('bill');
@@ -1998,11 +2007,11 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
         <main className="mx-auto grid min-h-[70vh] max-w-xl place-items-center p-4">
           <section className="w-full rounded-2xl bg-white p-6 text-center shadow-[0_12px_34px_rgba(46,42,38,0.08)]">
             <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={26} /></span>
-            <h1 className="mt-4 text-xl font-bold">{customerFlowComplete === 'payment' ? 'Pagamento solicitado' : 'Conta solicitada'}</h1>
+            <h1 className="mt-4 text-xl font-bold">{customerFlowComplete === 'payment' ? 'Pagamento solicitado' : 'Fechamento solicitado'}</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
               {customerFlowComplete === 'payment'
                 ? 'Registramos sua preferência por ' + completedPaymentMethod + '. A equipe da unidade recebeu a solicitação para concluir o pagamento.'
-                : 'A equipe recebeu sua solicitação de fechamento da mesa.'}
+                : 'O estabelecimento foi avisado no sistema. Aguarde a equipe conferir o pagamento e concluir o fechamento da mesa.'}
             </p>
             <div className="mt-5 rounded-xl bg-[#f7f7f5] p-4 text-left">
               <small className="text-slate-400">Mesa</small><b className="block">{data.table.name}</b>
@@ -2160,7 +2169,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
           <p className="mt-1 text-xs text-slate-400">A equipe recebe a solicitação diretamente na tela de Mesas.</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <button disabled={hasWaiter || requesting === 'waiter'} onClick={() => void sendRequest('waiter')} className="rounded-xl bg-[#f5c84b] px-4 py-4 text-sm font-bold text-[#5f4700] disabled:opacity-60">{hasWaiter ? 'Garçom já solicitado' : 'Chamar garçom'}</button>
-            <button disabled={hasBill || requesting === 'bill'} onClick={() => void sendRequest('bill')} className="rounded-xl bg-[#f45f63] px-4 py-4 text-sm font-bold text-white disabled:opacity-60">{hasBill ? 'Conta já solicitada' : 'Solicitar a conta'}</button>
+            <button disabled={hasBill || requesting === 'bill'} onClick={() => void closeBill()} className="rounded-xl bg-[#f45f63] px-4 py-4 text-sm font-bold text-white disabled:opacity-60">{hasBill ? 'Fechamento já solicitado' : requesting === 'bill' ? 'Solicitando...' : 'Fechar mesa'}</button>
           </div>
         </section>
 
@@ -2192,7 +2201,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
               <div className="mt-5 grid gap-2">
                 <button onClick={() => continueOrdering()} className="w-full rounded-xl bg-[#f45f3f] px-4 py-4 text-sm font-bold text-white">Quero pedir mais</button>
                 <button onClick={() => setPaymentChoiceOpen(true)} className="w-full rounded-xl bg-[#202538] px-4 py-4 text-sm font-bold text-white">Realizar pagamento</button>
-                <button disabled={requesting === 'bill'} onClick={() => void closeBill()} className="w-full rounded-xl border border-[#dfe3e5] bg-white px-4 py-3 text-xs font-semibold text-slate-600 disabled:opacity-50">{requesting === 'bill' ? 'Solicitando...' : 'Fechar a conta, não quero pedir mais'}</button>
+                <button disabled={requesting === 'bill'} onClick={() => void closeBill()} className="w-full rounded-xl border border-[#dfe3e5] bg-white px-4 py-3 text-xs font-semibold text-slate-600 disabled:opacity-50">{requesting === 'bill' ? 'Solicitando...' : 'Fechar mesa, não quero pedir mais'}</button>
               </div>
             ) : (
               <div className="mt-5">

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+const testAdminPassword = randomBytes(24).toString('hex');
+process.env.ADMIN_PASSWORD = testAdminPassword;
 import { handler } from './dist-backend/backend/index.js';
 let token;
 let checks = 0;
@@ -8,7 +11,7 @@ const call = async (method, path, body, expected = 200, headers = {}) => {
   checks++;
   return result.body;
 };
-const login = await call('POST', '/api/auth/login', { mode: 'empresa', email: 'admin@tapfood.com.br', password: 'TapFood@2026' });
+const login = await call('POST', '/api/auth/login', { mode: 'empresa', email: 'admin@tapfood.com.br', password: testAdminPassword });
 token = login.token;
 const qr = await call('POST', '/api/customer/access', { tableName: 'Mesa 01' });
 assert.equal(qr.companyId, '__master__');
@@ -90,7 +93,16 @@ await call('POST', customerPath + '/register', { name: 'Cliente mesa QA', phone:
 await call('POST', customerPath + '/orders', { items: [{ productId: product.id, qty: 1 }] }, 201);
 for (const type of ['waiter', 'bill']) {
   const request = await call('POST', customerPath + '/request', { type }, 201);
+  if (type === 'bill') {
+    const notified = await state();
+    assert.ok(notified.serviceRequests.some(r => r.id === request.id && r.type === 'bill' && r.status === 'pending'));
+    assert.notEqual(notified.tables.find(t => t.name === tableName).status, 'Livre');
+    const duplicate = await call('POST', customerPath + '/request', { type });
+    assert.equal(duplicate.id, request.id);
+    assert.ok((await call('GET', customerPath)).pendingRequests.some(r => r.id === request.id));
+  }
   await call('PUT', '/api/service-requests/' + request.id + '/resolve', {});
+  if (type === 'bill') assert.ok(!(await state()).serviceRequests.some(r => r.id === request.id && r.status === 'pending'));
 }
 for (const method of ['Pix', 'Cartão', 'Dinheiro']) await call('POST', customerPath + '/payment', { method }, 201);
 await call('DELETE', '/api/products/' + product.id);
@@ -98,3 +110,4 @@ await call('DELETE', '/api/menu/categories/' + category.id);
 await call('DELETE', '/api/settings/branding/logo');
 await call('POST', '/api/cash/close', {});
 console.log(`PASS: ${checks} verificações de ações e validações pela API, com dados isolados.`);
+
