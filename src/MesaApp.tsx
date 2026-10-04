@@ -1826,7 +1826,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
   const [orderMessage, setOrderMessage] = useState('');
   const [postOrderOpen, setPostOrderOpen] = useState(false);
   const [paymentChoiceOpen, setPaymentChoiceOpen] = useState(false);
-  const [customerFlowComplete, setCustomerFlowComplete] = useState<'bill' | 'payment' | ''>('');
+  const [customerFlowComplete, setCustomerFlowComplete] = useState<'bill' | 'payment' | ''>(() => window.sessionStorage.getItem('tapfood-closed-' + code) === '1' ? 'bill' : '');
   const [completedPaymentMethod, setCompletedPaymentMethod] = useState('');
   const [lastOrderedProductIds, setLastOrderedProductIds] = useState<string[]>([]);
   const customerStorageKey = 'tapfood-customer-' + code.toLowerCase();
@@ -1971,6 +1971,7 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
     }
     setPostOrderOpen(false);
     setPaymentChoiceOpen(false);
+    window.sessionStorage.setItem('tapfood-closed-' + code, '1');
     setCustomerFlowComplete('bill');
   };
 
@@ -2026,17 +2027,18 @@ function CustomerPortal({ code, session, onLogout }: { code: string; session?: A
         <main className="mx-auto grid min-h-[70vh] max-w-xl place-items-center p-4">
           <section className="w-full rounded-2xl bg-white p-6 text-center shadow-[0_12px_34px_rgba(46,42,38,0.08)]">
             <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={26} /></span>
-            <h1 className="mt-4 text-xl font-bold">{customerFlowComplete === 'payment' ? 'Pagamento solicitado' : 'Fechamento solicitado'}</h1>
+            <h1 className="mt-4 text-xl font-bold">{customerFlowComplete === 'payment' ? 'Pagamento solicitado' : 'Obrigado!'}</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
               {customerFlowComplete === 'payment'
                 ? 'Registramos sua preferência por ' + completedPaymentMethod + '. A equipe da unidade recebeu a solicitação para concluir o pagamento.'
-                : 'O estabelecimento foi avisado no sistema. Aguarde a equipe conferir o pagamento e concluir o fechamento da mesa.'}
+                : 'Obrigado pela visita! Seu atendimento foi encerrado e o estabelecimento recebeu a solicitação para conferir a conta e concluir o fechamento da mesa.'}
             </p>
             <div className="mt-5 rounded-xl bg-[#f7f7f5] p-4 text-left">
               <small className="text-slate-400">Mesa</small><b className="block">{data.table.name}</b>
               <small className="mt-3 block text-slate-400">Total atual</small><b className="block text-lg text-[#ef5a38]">{BRL(data.table.total || subtotal)}</b>
             </div>
-            <button onClick={() => { setCustomerFlowComplete(''); setCompletedPaymentMethod(''); window.setTimeout(() => document.getElementById('customer-menu')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="mt-5 w-full rounded-xl border border-[#dfe3e5] px-4 py-3 text-xs font-semibold text-slate-600">Voltar ao cardápio</button>
+            {customerFlowComplete === 'payment' && <button onClick={() => { setCustomerFlowComplete(''); setCompletedPaymentMethod(''); window.setTimeout(() => document.getElementById('customer-menu')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="mt-5 w-full rounded-xl border border-[#dfe3e5] px-4 py-3 text-xs font-semibold text-slate-600">Voltar ao cardápio</button>}
+            {customerFlowComplete === 'bill' && <p className="mt-5 text-xs text-slate-400">Você já pode fechar esta página.</p>}
           </section>
         </main>
       </div>
@@ -4313,3 +4315,4 @@ function Metric({ label, value }: { label: string; value: string }) {
 function MiniStat({ label, value }: { label: string; value: string }) {
   return <div className="rounded-lg bg-[#f7f8fa] p-4"><span className="block text-[9px] text-slate-400">{label}</span><b className="mt-1 block text-sm">{value}</b></div>;
 }
+
