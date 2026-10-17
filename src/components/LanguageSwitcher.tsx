@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_LOCALE, LOCALE_LABELS, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, isLocale, readPreferredLocale, savePreferredLocale, type Locale } from '../lib/i18n';
+import { LOCALE_LABELS, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, isLocale, readPreferredLocale, savePreferredLocale, type Locale } from '../lib/i18n';
 
 export default function LanguageSwitcher() {
   const [locale, setLocale] = useState<Locale>(readPreferredLocale);
