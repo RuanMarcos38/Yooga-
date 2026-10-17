@@ -1,6 +1,10 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { ai, db, storage, router, json, error, currentRequestHeaders } from './appdeploy-compat.js';
 import { sessionSigningSecret } from './session-secret.js';
+import {
+  readDeliveryTracking, enableDeliveryTracking, stopDeliveryTracking, saveDeliveryPosition,
+  deliveryToken, verifyDeliveryToken,
+} from './delivery-tracking.js';
 
 type P = {
   id: string;
@@ -1383,7 +1387,86 @@ function exportState(type: string, state: S) {
   return null;
 }
 
+function deliveryNoStore(body: unknown) {
+  const result = json(body);
+  return { ...result, headers: { ...result.headers, 'Cache-Control': 'no-store' } };
+}
+
 export const handler = router({
+  // A visualização é restrita a links assinados individuais, nunca a um número público de pedido.
+  'GET /api/delivery/track/:token': [async ({ params }) => {
+    const claims = verifyDeliveryToken(params.token);
+    if (!claims) return error('Link inválido ou expirado', 404);
+    const tracking = await readDeliveryTracking(claims.t, claims.u, claims.o);
+    if (!tracking || tracking.nonce !== claims.n || Date.parse(tracking.expiresAt) <= Date.now()) return error('Rastreamento indisponível', 404);
+    const current = await get(claims.t, claims.u);
+    const order = current.state.orders.find(item => item.id === claims.o && item.channel === 'Delivery');
+    if (!order) return error('Pedido não encontrado', 404);
+    const active = tracking.active && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status);
+    const position = active ? tracking.position || null : null;
+    return deliveryNoStore({ code: order.code, status: order.status, active, position, expiresAt: tracking.expiresAt });
+  }],
+
+  // Apenas o link do entregador pode enviar coordenadas; nunca solicita senha do restaurante.
+  'POST /api/delivery/location/:token': [async ({ params, body }) => {
+    const claims = verifyDeliveryToken(params.token);
+    if (!claims || claims.r !== 'driver') return error('Link do entregador inválido ou expirado', 401);
+    const tracking = await readDeliveryTracking(claims.t, claims.u, claims.o);
+    if (!tracking || tracking.nonce !== claims.n || !tracking.active) return error('Compartilhamento encerrado', 403);
+    const current = await get(claims.t, claims.u);
+    const order = current.state.orders.find(item => item.id === claims.o && item.channel === 'Delivery');
+    if (!order || order.status !== 'Pronto') return error('Localização permitida somente durante a entrega', 409);
+    const data = (body || {}) as { lat?: number; lng?: number; accuracy?: number };
+    const lat = Number(data.lat), lng = Number(data.lng), accuracy = Number(data.accuracy);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(accuracy) ||
+      lat < -90 || lat > 90 || lng < -180 || lng > 180 || accuracy < 0 || accuracy > 10000) {
+      return error('Coordenadas inválidas', 400);
+    }
+    const result = await saveDeliveryPosition(claims.t, claims.u, tracking, {
+      lat, lng, accuracy: Math.round(accuracy), updatedAt: new Date().toISOString(),
+    });
+    if (result === 'inactive') return error('Compartilhamento encerrado', 403);
+    return deliveryNoStore({ saved: true, throttled: result === 'throttled' });
+  }],
+
+  'GET /api/delivery/:id/tracking': [async ({ params }) => {
+    const current = await get();
+    const order = current.state.orders.find(item => item.id === params.id && item.channel === 'Delivery');
+    if (!order) return error('Pedido delivery não encontrado', 404);
+    const tenantId = currentTenantId(), unitId = currentUnitId();
+    const tracking = await readDeliveryTracking(tenantId, unitId, order.id);
+    if (!tracking) return deliveryNoStore({ exists: false, active: false });
+    const active = tracking.active && Date.parse(tracking.expiresAt) > Date.now() &&
+      !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status);
+    return deliveryNoStore({
+      exists: true, active, position: active ? tracking.position || null : null,
+      viewerToken: active ? deliveryToken(tracking, tenantId, unitId, 'viewer') : null,
+      driverToken: active ? deliveryToken(tracking, tenantId, unitId, 'driver') : null,
+    });
+  }],
+
+  'POST /api/delivery/:id/tracking': [async ({ params }) => {
+    const current = await get();
+    const order = current.state.orders.find(item => item.id === params.id && item.channel === 'Delivery');
+    if (!order) return error('Pedido delivery não encontrado', 404);
+    if (['Entregue', 'Finalizado', 'Cancelado'].includes(order.status)) return error('Pedido já encerrado', 409);
+    const tenantId = currentTenantId(), unitId = currentUnitId();
+    const tracking = await enableDeliveryTracking(tenantId, unitId, order.id);
+    return deliveryNoStore({
+      exists: true, active: true, position: tracking.position || null,
+      viewerToken: deliveryToken(tracking, tenantId, unitId, 'viewer'),
+      driverToken: deliveryToken(tracking, tenantId, unitId, 'driver'),
+    });
+  }],
+
+  'POST /api/delivery/:id/tracking/stop': [async ({ params }) => {
+    const current = await get();
+    const order = current.state.orders.find(item => item.id === params.id && item.channel === 'Delivery');
+    if (!order) return error('Pedido delivery não encontrado', 404);
+    await stopDeliveryTracking(currentTenantId(), currentUnitId(), order.id);
+    return deliveryNoStore({ stopped: true });
+  }],
+
   'GET /api/_healthcheck': [async () => json({
     message: 'Success',
     service: 'TAPFOOD Backend',
@@ -2861,6 +2944,9 @@ export const handler = router({
       const hasOtherActive = current.state.orders.some(item => item.id !== order.id && item.table === order.table && !['Entregue', 'Finalizado', 'Cancelado'].includes(item.status));
       if (table && !hasOtherActive) table.status = 'Fechamento';
     }
+    if (order.channel === 'Delivery' && ['Entregue', 'Finalizado', 'Cancelado'].includes(value.status)) {
+      await stopDeliveryTracking(currentTenantId(), currentUnitId(), order.id);
+    }
     audit(current.state, 'order', order.id, 'Status do pedido alterado', order.code + ' · ' + value.status);
     await save(current.id, current.state);
     await notifyN8n(current.state, value.status === 'Pronto' ? 'order.ready' : 'order.status_changed', { order });
@@ -3007,7 +3093,9 @@ export const handler = router({
     'POST /api/assistant', 'GET /api/open/v1/health', 'GET /api/open/v1/menu',
     'GET /api/open/v1/tables', 'GET /api/open/v1/orders', 'POST /api/open/v1/orders',
   ]);
-  if (publicRoutes.has(route) || /^\/api\/customer\/table\//.test(event.path)) return null;
+  if (publicRoutes.has(route) || /^\/api\/customer\/table\//.test(event.path) ||
+      (event.method.toUpperCase() === 'GET' && /^\/api\/delivery\/track\/[^/]+$/.test(event.path)) ||
+      (event.method.toUpperCase() === 'POST' && /^\/api\/delivery\/location\/[^/]+$/.test(event.path))) return null;
   const session = sessionFromAuthorization();
   if (!session) return error('Autenticação obrigatória', 401);
   if (session.mode !== 'empresa' || !['Administrador', 'Super Admin'].includes(session.role || '')) {
