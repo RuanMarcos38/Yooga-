@@ -79,7 +79,7 @@ export function verifyDeliveryToken(token: string): DeliveryClaims | null {
   const parts = token.split('.');
   const expected = createHmac('sha256', sessionSigningSecret()).update('tapfood-delivery-v1:' + parts[1]).digest();
   const supplied = Buffer.from(parts[2], 'base64url');
-  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
+  if (supplied.toString('base64url') !== parts[2] || expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
   try {
     const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as DeliveryClaims;
     if (claims.v !== 1 || !['viewer', 'driver'].includes(claims.r) || typeof claims.t !== 'string' ||
