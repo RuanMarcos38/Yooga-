@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, apiBaseUrl } from './lib/api';
+import { DeliveryPublicPage, DeliveryTrackingControls } from './DeliveryTracking';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   LayoutDashboard,
@@ -449,7 +450,10 @@ const readStoredSession = (): AuthSession | null => {
 const tableLoginPassword = (tableName: string) => 'mesa' + (tableName.match(/\d+/)?.[0] || '01').padStart(2, '0');
 
 export default function MesaApp() {
-  const customerCode = new URLSearchParams(window.location.search).get('cliente');
+  const params = new URLSearchParams(window.location.search);
+  const deliveryViewerToken = params.get('rastreio');
+  const deliveryDriverToken = params.get('entregador');
+  const customerCode = params.get('cliente');
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
   const [trackingConfig, setTrackingConfig] = useState<PublicTrackingConfig | null>(null);
 
@@ -477,6 +481,8 @@ export default function MesaApp() {
     if (window.location.pathname !== '/') window.history.pushState({}, '', '/');
   };
 
+  if (deliveryViewerToken) return <DeliveryPublicPage mode="viewer" token={deliveryViewerToken} />;
+  if (deliveryDriverToken) return <DeliveryPublicPage mode="driver" token={deliveryDriverToken} />;
   if (customerCode) return <CustomerPortal code={customerCode} session={session} onLogout={session?.mode === 'cliente' ? handleLogout : undefined} />;
   if (!session) return <LoginScreen onLogin={handleLogin} />;
   if (session.mode === 'cliente') return <CustomerPortal code={session.tableCode || 'Mesa 01'} session={session} onLogout={handleLogout} />;
@@ -2878,12 +2884,15 @@ function DeliveryView(props: ViewProps) {
         {deliveryOrders.map(order => {
           const next = nextDeliveryStatus(order.status);
           return (
-          <DataRow key={order.id}>
+          <div key={order.id} className="border-t border-[#f0f0f4] first:border-t-0">
+          <DataRow>
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#ef5a38]"><Bike size={17} /></span>
             <span className="min-w-0 flex-1"><b className="block text-xs">{order.code} · {order.customer}</b><small className="text-[10px] text-slate-400">{order.items.length} item(ns) · {order.paymentMethod || 'Pagamento não informado'}</small></span>
             <b className="text-xs">{BRL(order.total)}</b><Badge value={order.status} />
             {next && <button onClick={() => void props.run(() => api.put('/api/orders/' + order.id + '/status', { status: next }), 'Delivery atualizado.')} className="rounded-lg bg-[#f45f3f] px-3 py-2 text-[9px] font-bold text-white">{actionLabel(order.status)}</button>}
           </DataRow>
+          <DeliveryTrackingControls orderId={order.id} status={order.status} />
+          </div>
           );
         })}
         {deliveryOrders.length === 0 && <div className="rounded-xl border border-[#e8e4de] bg-[#faf9f6] p-6 text-center text-xs text-slate-400">Nenhum pedido de delivery no momento.</div>}
