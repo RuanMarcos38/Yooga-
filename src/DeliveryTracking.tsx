@@ -34,8 +34,12 @@ function GoogleDeliveryMap({ position }: { position?: Position | null }) {
       <iframe title="Google Maps - localização do entregador" src={embed} loading="lazy"
         referrerPolicy="strict-origin-when-cross-origin" className="h-[300px] w-full rounded-xl border" allowFullScreen />
     ) : (
-      <div className="grid min-h-[140px] place-items-center rounded-xl border bg-slate-50 p-4 text-center text-xs text-slate-600">
-        Mapa incorporado requer uma chave da Google Maps Embed API configurada no frontend.
+      <div className="flex min-h-[140px] flex-col items-center justify-center gap-3 rounded-xl border bg-slate-50 p-4 text-center">
+        <p className="text-sm text-slate-600">A posição mais recente está disponível no Google Maps.</p>
+        <a href={googleLocationUrl(position)} target="_blank" rel="noopener noreferrer"
+          referrerPolicy="no-referrer" className="rounded-lg bg-[#f45f3f] px-4 py-3 text-xs font-bold text-white">
+          Ver posição no Google Maps
+        </a>
       </div>
     )}
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -113,6 +117,10 @@ export function DeliveryTrackingControls({ orderId, status }: { orderId: string;
         {info?.active && <>
           <button onClick={() => void copyLink('viewer')} className="rounded-lg border px-3 py-2 text-xs font-semibold">Copiar link do cliente</button>
           <button onClick={() => void copyLink('driver')} className="rounded-lg border px-3 py-2 text-xs font-semibold">Copiar link do entregador</button>
+          {info.viewerToken && <a href={urlFor('viewer', info.viewerToken)} target="_blank" rel="noopener noreferrer"
+            referrerPolicy="no-referrer" className="rounded-lg border px-3 py-2 text-xs font-semibold text-blue-700">Abrir visão do cliente</a>}
+          {info.driverToken && <a href={urlFor('driver', info.driverToken)} target="_blank" rel="noopener noreferrer"
+            referrerPolicy="no-referrer" className="rounded-lg border px-3 py-2 text-xs font-semibold text-blue-700">Abrir visão do entregador</a>}
           <button disabled={busy} onClick={() => void update('stop')}
             className="rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-60">Encerrar rastreamento</button>
         </>}
