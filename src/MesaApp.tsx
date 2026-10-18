@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, apiBaseUrl } from './lib/api';
+import { DeliveryPublicPage, DeliveryTrackingControls } from './DeliveryTracking';
+import { readPreferredLocale, translate, type Locale, type TranslationKey } from './lib/i18n';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   LayoutDashboard,
@@ -448,8 +450,21 @@ const readStoredSession = (): AuthSession | null => {
 
 const tableLoginPassword = (tableName: string) => 'mesa' + (tableName.match(/\d+/)?.[0] || '01').padStart(2, '0');
 
+function useUiLanguage() {
+  const [locale, setLocale] = useState<Locale>(readPreferredLocale);
+  useEffect(() => {
+    const onChange = () => setLocale(readPreferredLocale());
+    window.addEventListener('tapfood:locale-changed', onChange);
+    return () => window.removeEventListener('tapfood:locale-changed', onChange);
+  }, []);
+  return (key: TranslationKey) => translate(locale, key);
+}
+
 export default function MesaApp() {
-  const customerCode = new URLSearchParams(window.location.search).get('cliente');
+  const params = new URLSearchParams(window.location.search);
+  const deliveryViewerToken = params.get('rastreio');
+  const deliveryDriverToken = params.get('entregador');
+  const customerCode = params.get('cliente');
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
   const [trackingConfig, setTrackingConfig] = useState<PublicTrackingConfig | null>(null);
 
@@ -477,6 +492,8 @@ export default function MesaApp() {
     if (window.location.pathname !== '/') window.history.pushState({}, '', '/');
   };
 
+  if (deliveryViewerToken) return <DeliveryPublicPage mode="viewer" token={deliveryViewerToken} />;
+  if (deliveryDriverToken) return <DeliveryPublicPage mode="driver" token={deliveryDriverToken} />;
   if (customerCode) return <CustomerPortal code={customerCode} session={session} onLogout={session?.mode === 'cliente' ? handleLogout : undefined} />;
   if (!session) return <LoginScreen onLogin={handleLogin} />;
   if (session.mode === 'cliente') return <CustomerPortal code={session.tableCode || 'Mesa 01'} session={session} onLogout={handleLogout} />;
@@ -510,6 +527,7 @@ function BrandMark({ settings, compact = false }: { settings: AppSettings | Cust
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const t = useUiLanguage();
   const [mode, setMode] = useState<'empresa' | 'cliente'>('empresa');
   const [email, setEmail] = useState('admin@tapfood.com.br');
   const [tableCode, setTableCode] = useState('Mesa 01');
@@ -574,18 +592,18 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
 
           <div className="space-y-3">
             {mode === 'empresa' ? (
-              <Field label="E-mail"><input autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} className="control" /></Field>
+              <Field label={t("email")}><input autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} className="control" /></Field>
             ) : (
-              <Field label="Mesa"><input value={tableCode} onChange={event => setTableCode(event.target.value)} placeholder="Mesa 01" className="control" /></Field>
+              <Field label={t("table")}><input value={tableCode} onChange={event => setTableCode(event.target.value)} placeholder="Mesa 01" className="control" /></Field>
             )}
-            <Field label="Senha"><input autoComplete={mode === 'empresa' ? 'current-password' : 'one-time-code'} type="password" value={password} onChange={event => setPassword(event.target.value)} className="control" /></Field>
+            <Field label={t("password")}><input autoComplete={mode === 'empresa' ? 'current-password' : 'one-time-code'} type="password" value={password} onChange={event => setPassword(event.target.value)} className="control" /></Field>
           </div>
 
           {mode === 'cliente' && <p className="mt-2 text-[10px] text-slate-400">A senha da mesa segue o padrão informado ao estabelecimento.</p>}
           {error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">{error}</div>}
 
           <button disabled={busy || !password.trim()} className="mt-5 w-full rounded-xl bg-[#f45f3f] px-5 py-3 text-xs font-semibold text-white disabled:opacity-50">
-            {busy ? 'Entrando...' : 'Entrar'}
+            {busy ? 'Entrando...' : t('login')}
           </button>
         </form>
       </div>
@@ -594,6 +612,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
 }
 
 function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () => void }) {
+  const t = useUiLanguage();
   const [page, setPageState] = useState<Page>(() => pageFromPath(window.location.pathname));
   const [data, setData] = useState<State>(empty);
   const [loading, setLoading] = useState(true);
@@ -791,7 +810,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           <button className="grid h-10 w-10 place-items-center rounded-xl border lg:hidden" onClick={() => setMenu(true)}><Menu size={18} /></button>
           <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[#e7e8ee] bg-[#f9fafc] px-3 md:max-w-[420px]">
             <Search size={16} className="text-slate-400" />
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar produtos, clientes ou pedidos" className="min-w-0 flex-1 bg-transparent text-xs outline-none" />
+            <input value={search} onChange={event => setSearch(event.target.value)} placeholder={t("search")} className="min-w-0 flex-1 bg-transparent text-xs outline-none" />
           </label>
           <button onClick={() => setOnlyAvailable(value => !value)} className={'hidden h-10 items-center gap-2 rounded-lg px-4 text-xs font-semibold text-white sm:flex ' + (onlyAvailable ? 'bg-[#d84f31]' : 'bg-[#f45f3f]')}>
             Filtro <SlidersHorizontal size={14} />
@@ -813,7 +832,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           )}
 
           {loading ? (
-            <div className="grid min-h-[65vh] place-items-center text-sm text-slate-400">Carregando sistema...</div>
+            <div className="grid min-h-[65vh] place-items-center text-sm text-slate-400">{t("loading")}</div>
           ) : (
             <PageView
               page={page}
@@ -2878,12 +2897,15 @@ function DeliveryView(props: ViewProps) {
         {deliveryOrders.map(order => {
           const next = nextDeliveryStatus(order.status);
           return (
-          <DataRow key={order.id}>
+          <div key={order.id} className="border-t border-[#f0f0f4] first:border-t-0">
+          <DataRow>
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#fff2ee] text-[#ef5a38]"><Bike size={17} /></span>
             <span className="min-w-0 flex-1"><b className="block text-xs">{order.code} · {order.customer}</b><small className="text-[10px] text-slate-400">{order.items.length} item(ns) · {order.paymentMethod || 'Pagamento não informado'}</small></span>
             <b className="text-xs">{BRL(order.total)}</b><Badge value={order.status} />
             {next && <button onClick={() => void props.run(() => api.put('/api/orders/' + order.id + '/status', { status: next }), 'Delivery atualizado.')} className="rounded-lg bg-[#f45f3f] px-3 py-2 text-[9px] font-bold text-white">{actionLabel(order.status)}</button>}
           </DataRow>
+          <DeliveryTrackingControls orderId={order.id} status={order.status} />
+          </div>
           );
         })}
         {deliveryOrders.length === 0 && <div className="rounded-xl border border-[#e8e4de] bg-[#faf9f6] p-6 text-center text-xs text-slate-400">Nenhum pedido de delivery no momento.</div>}
