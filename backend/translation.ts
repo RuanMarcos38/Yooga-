@@ -30,7 +30,16 @@ export async function translateText(text: string, sourceLocale: string, targetLo
         ],
       }),
     });
-    if (!response.ok) throw new Error('TRANSLATION_PROVIDER_ERROR');
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null) as { error?: { code?: string; type?: string } } | null;
+      const code = failure?.error?.code || '';
+      if (failure?.error?.type === 'insufficient_quota' || ['insufficient_quota', 'credit_balance_exhausted'].includes(code)) {
+        throw new Error('TRANSLATION_QUOTA');
+      }
+      if (response.status === 401 || response.status === 403) throw new Error('TRANSLATION_AUTH');
+      if (response.status === 429) throw new Error('TRANSLATION_RATE_LIMIT');
+      throw new Error('TRANSLATION_PROVIDER_ERROR');
+    }
     const data = await response.json() as {
       choices?: Array<{ message?: { content?: string | null } }>;
     };

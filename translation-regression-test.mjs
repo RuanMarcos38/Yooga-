@@ -36,6 +36,17 @@ try {
   assert.equal(translated.status, 200);
   assert.equal(translated.body.translatedText, 'Order 123: R$ 20,00');
   assert.equal(requests, 1);
+  globalThis.fetch = async () => Response.json({error: {code: 'credit_balance_exhausted', type: 'insufficient_quota'}}, {status: 429});
+  const exhausted = await call(input, token);
+  assert.equal(exhausted.status, 503);
+  assert.match(exhausted.body.message, /sem créditos/);
+  assert.doesNotMatch(exhausted.body.message, /isolated-test-placeholder/);
+  globalThis.fetch = async () => Response.json({error: {code: 'rate_limit_exceeded'}}, {status: 429});
+  const limited = await call(input, token);
+  assert.equal(limited.status, 429);
+  assert.match(limited.body.message, /Aguarde/);
+  globalThis.fetch = async () => new Response('', {status: 401});
+  assert.match((await call(input, token)).body.message, /chave.*não foi aceita/);
   globalThis.fetch = async () => new Response('', {status: 503});
   assert.equal((await call(input, token)).status, 503);
 } finally {

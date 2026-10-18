@@ -2882,7 +2882,7 @@ function DeliveryView(props: ViewProps) {
   const actionLabel = (status: string) => {
     if (status === 'Novo') return 'Aceitar';
     if (status === 'Preparando') return 'Despachar';
-    if (status === 'Pronto') return 'Entregar';
+    if (status === 'Pronto') return 'Confirmar entrega';
     return '';
   };
   const openDeliveryOrder = () => {
@@ -2890,9 +2890,15 @@ function DeliveryView(props: ViewProps) {
     props.setTable('');
     props.setPage('pdv');
   };
-  const deliveryOrders = props.data.orders.filter(order => order.channel === 'Delivery');
+  const deliveryOrders = props.data.orders.filter(order => order.channel === 'Delivery').sort((a, b) =>
+    Number(['Entregue', 'Finalizado', 'Cancelado'].includes(a.status)) - Number(['Entregue', 'Finalizado', 'Cancelado'].includes(b.status)));
   return (
     <PageSection title="Delivery" subtitle="Pedidos de entrega e retirada" action="Novo delivery" onAction={openDeliveryOrder}>
+      <div className="mb-4 rounded-xl border border-orange-100 bg-orange-50 p-4 text-xs text-slate-700">
+        <b className="block text-sm text-slate-900">Organize a entrega e acompanhe o motoboy</b>
+        <p className="mt-1">Crie o pedido em Novo delivery. Abra Preparar entrega para informar o destino e gerar o link ou QR do motoboy. Despachar libera o GPS; Confirmar entrega encerra o pedido após o recebimento.</p>
+        <p className="mt-1">Pedidos já entregues ficam no histórico, com GPS encerrado. O motoboy também pode confirmar a entrega pelo celular.</p>
+      </div>
       <Surface>
         {deliveryOrders.map(order => {
           const next = nextDeliveryStatus(order.status);
