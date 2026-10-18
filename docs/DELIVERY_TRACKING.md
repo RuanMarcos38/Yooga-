@@ -4,6 +4,18 @@ Melhoria isolada na branch de rastreamento; o fluxo existente de pedidos e as cr
 
 ## Utilização
 
+### Fluxo do estabelecimento e do motoboy
+
+- Crie um pedido em **Novo delivery**. Pedidos já entregues não são reabertos nem geram novos acessos.
+- Abra **Preparar entrega / Motoboy e GPS**, informe destinatário, endereço e referência. Nome e telefone do motoboy podem ser preenchidos aqui ou por ele no celular.
+- Salve para gerar links separados e QR codes. Compartilhe manualmente o acesso do motoboy somente com o responsável. O cliente recebe o acesso de acompanhamento.
+- Alterar nome ou telefone do motoboy pela administração revoga os acessos anteriores, remove o GPS antigo e gera novos links que devem ser compartilhados novamente. A atualização dos próprios dados pelo motoboy mantém seu acesso.
+- Use **Despachar** para liberar o pedido (`Pronto`). No painel do motoboy, confirme nome e telefone e toque em **Iniciar rota e compartilhar GPS**. O endereço deve estar cadastrado. O primeiro GPS aceito registra o início da rota.
+- O motoboy pode abrir a rota no Google Maps e, após o recebimento, escolher **Finalizar entrega** e **Confirmar entrega recebida**. Isso marca o pedido como `Entregue`, registra a ação e remove o GPS. Não registra pagamento ou movimentação de caixa.
+- Telefone, destinatário, endereço e referência são retornados somente à administração e ao link ativo do motoboy. O link do cliente recebe apenas identificação/status do pedido, nome do motoboy e GPS. Os links expiram em 24 horas.
+- Dados da entrega ficam na coleção separada de tracking, sem migração dos pedidos existentes. Nenhuma localização é criada por endereço ou simulada em produção.
+
+
 1. No TAPFOOD, entre em **Delivery**, abra **Google Maps · Rastrear entrega** no pedido e clique **Ativar rastreamento**.
 2. Copie **link do cliente** e envie ao comprador, por WhatsApp ou outro canal.
 3. Envie **link do entregador** somente à pessoa responsável pela entrega (ele permite enviar GPS e não deve ser divulgado ao cliente).

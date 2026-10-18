@@ -4,6 +4,7 @@ import { sessionSigningSecret } from './session-secret.js';
 import {
   readDeliveryTracking, enableDeliveryTracking, stopDeliveryTracking, saveDeliveryPosition,
   deliveryToken, verifyDeliveryToken,
+  updateDeliveryAssignment, markDeliveryDeparture, type DeliveryAssignment,
 } from './delivery-tracking.js';
 import { translateText } from './translation.js';
 
@@ -1405,7 +1406,11 @@ export const handler = router({
     if (!order) return error('Pedido não encontrado', 404);
     const active = tracking.active && !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status);
     const position = active ? tracking.position || null : null;
-    return deliveryNoStore({ code: order.code, status: order.status, active, position, expiresAt: tracking.expiresAt });
+    return deliveryNoStore({ code: order.code, status: order.status, active, position, expiresAt: tracking.expiresAt,
+      departedAt: tracking.departedAt || null,
+      driverName: tracking.assignment?.driverName || '',
+      ...(claims.r === 'driver' && active ? { assignment: tracking.assignment || null } : {}),
+    });
   }],
 
   // Apenas o link do entregador pode enviar coordenadas; nunca solicita senha do restaurante.
@@ -1418,7 +1423,10 @@ export const handler = router({
     const order = current.state.orders.find(item => item.id === claims.o && item.channel === 'Delivery');
     if (!order || order.status !== 'Pronto') return error('Localização permitida somente durante a entrega', 409);
     const data = (body || {}) as { lat?: number; lng?: number; accuracy?: number };
-    const lat = Number(data.lat), lng = Number(data.lng), accuracy = Number(data.accuracy);
+    if (typeof data.lat !== 'number' || typeof data.lng !== 'number' || typeof data.accuracy !== 'number') {
+      return error('Coordenadas inválidas', 400);
+    }
+    const lat = data.lat, lng = data.lng, accuracy = data.accuracy;
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(accuracy) ||
       lat < -90 || lat > 90 || lng < -180 || lng > 180 || accuracy < 0 || accuracy > 10000) {
       return error('Coordenadas inválidas', 400);
@@ -1427,6 +1435,7 @@ export const handler = router({
       lat, lng, accuracy: Math.round(accuracy), updatedAt: new Date().toISOString(),
     });
     if (result === 'inactive') return error('Compartilhamento encerrado', 403);
+    await markDeliveryDeparture(claims.t, claims.u, claims.o);
     return deliveryNoStore({ saved: true, throttled: result === 'throttled' });
   }],
 
@@ -1441,6 +1450,7 @@ export const handler = router({
       !['Entregue', 'Finalizado', 'Cancelado'].includes(order.status);
     return deliveryNoStore({
       exists: true, active, position: active ? tracking.position || null : null,
+      assignment: tracking.assignment || null, departedAt: tracking.departedAt || null,
       viewerToken: active ? deliveryToken(tracking, tenantId, unitId, 'viewer') : null,
       driverToken: active ? deliveryToken(tracking, tenantId, unitId, 'driver') : null,
     });
@@ -1455,6 +1465,7 @@ export const handler = router({
     const tracking = await enableDeliveryTracking(tenantId, unitId, order.id);
     return deliveryNoStore({
       exists: true, active: true, position: tracking.position || null,
+      assignment: tracking.assignment || null,
       viewerToken: deliveryToken(tracking, tenantId, unitId, 'viewer'),
       driverToken: deliveryToken(tracking, tenantId, unitId, 'driver'),
     });
@@ -1466,6 +1477,64 @@ export const handler = router({
     if (!order) return error('Pedido delivery não encontrado', 404);
     await stopDeliveryTracking(currentTenantId(), currentUnitId(), order.id);
     return deliveryNoStore({ stopped: true });
+  }],
+
+  'PUT /api/delivery/:id/assignment': [async ({ params, body }) => {
+    const current = await get();
+    const order = current.state.orders.find(item => item.id === params.id && item.channel === 'Delivery');
+    if (!order) return error('Pedido delivery não encontrado', 404);
+    if (['Entregue', 'Finalizado', 'Cancelado'].includes(order.status)) return error('Pedido encerrado. Crie um novo delivery para outra entrega.', 409);
+    const input = (body || {}) as Record<string, unknown>;
+    const limits = { driverName: 100, driverPhone: 20, recipient: 120, address: 300, notes: 500 };
+    const assignment = {} as DeliveryAssignment;
+    for (const key of Object.keys(limits) as Array<keyof DeliveryAssignment>) {
+      if (typeof input[key] !== 'string' || String(input[key]).length > limits[key]) return error('Dados da entrega inválidos', 400);
+      assignment[key] = String(input[key]).trim();
+    }
+    assignment.driverPhone = assignment.driverPhone.replace(/\D/g, '');
+    if (!assignment.recipient || !assignment.address) return error('Informe destinatário e endereço de entrega', 400);
+    if (assignment.driverPhone && !/^\d{10,13}$/.test(assignment.driverPhone)) return error('Telefone do motoboy inválido', 400);
+    const tenantId = currentTenantId(), unitId = currentUnitId();
+    await enableDeliveryTracking(tenantId, unitId, order.id);
+    await updateDeliveryAssignment(tenantId, unitId, order.id, assignment, true);
+    return deliveryNoStore({ saved: true, assignment });
+  }],
+
+  'POST /api/delivery/driver/:token/profile': [async ({ params, body }) => {
+    const claims = verifyDeliveryToken(params.token);
+    if (!claims || claims.r !== 'driver') return error('Acesso do entregador inválido ou expirado', 401);
+    const record = await readDeliveryTracking(claims.t, claims.u, claims.o);
+    if (!record?.active || record.nonce !== claims.n) return error('Compartilhamento encerrado', 403);
+    const current = await get(claims.t, claims.u);
+    const order = current.state.orders.find(item => item.id === claims.o && item.channel === 'Delivery');
+    if (!order || ['Entregue', 'Finalizado', 'Cancelado'].includes(order.status)) return error('Entrega encerrada', 409);
+    const input = (body || {}) as { driverName?: unknown; driverPhone?: unknown };
+    if (typeof input.driverName !== 'string' || !input.driverName.trim() || input.driverName.length > 100 ||
+        typeof input.driverPhone !== 'string' || input.driverPhone.length > 20) return error('Informe nome e telefone do motoboy', 400);
+    const phone = input.driverPhone.replace(/\D/g, '');
+    if (!/^\d{10,13}$/.test(phone)) return error('Telefone do motoboy inválido', 400);
+    await updateDeliveryAssignment(claims.t, claims.u, claims.o, {
+      recipient: '', address: '', notes: '', ...record.assignment, driverName: input.driverName.trim(), driverPhone: phone,
+    });
+    return deliveryNoStore({ saved: true });
+  }],
+
+  'POST /api/delivery/driver/:token/complete': [async ({ params }) => {
+    const claims = verifyDeliveryToken(params.token);
+    if (!claims || claims.r !== 'driver') return error('Acesso do entregador inválido ou expirado', 401);
+    const record = await readDeliveryTracking(claims.t, claims.u, claims.o);
+    if (!record || record.nonce !== claims.n) return error('Rastreamento não encontrado', 404);
+    const current = await get(claims.t, claims.u);
+    const order = current.state.orders.find(item => item.id === claims.o && item.channel === 'Delivery');
+    if (order?.status === 'Entregue') return deliveryNoStore({ completed: true });
+    if (!record.active || !order || order.status !== 'Pronto' || !record.departedAt) return error('Inicie a rota antes de confirmar a entrega', 409);
+    await stopDeliveryTracking(claims.t, claims.u, claims.o);
+    order.status = 'Entregue';
+    order.updatedAt = order.deliveredAt = new Date().toISOString();
+    audit(current.state, 'order', order.id, 'Entrega confirmada pelo motoboy', order.code + ' · Entregue', record.assignment?.driverName || 'Motoboy');
+    await save(current.id, current.state);
+    await notifyN8n(current.state, 'order.status_changed', { order });
+    return deliveryNoStore({ completed: true });
   }],
 
   'GET /api/_healthcheck': [async () => json({
@@ -2391,6 +2460,10 @@ export const handler = router({
       const translatedText = await translateText(text, sourceLocale, targetLocale);
       return json({ translatedText, sourceLocale, targetLocale });
     } catch (err) {
+      const reason = err instanceof Error ? err.message : '';
+      if (reason === 'TRANSLATION_QUOTA') return error('O tradutor está sem créditos no provedor. O administrador precisa regularizar o saldo da API. O seletor de idioma continua disponível.', 503);
+      if (reason === 'TRANSLATION_AUTH') return error('A chave do tradutor não foi aceita. Peça ao administrador para revisar a configuração no backend.', 503);
+      if (reason === 'TRANSLATION_RATE_LIMIT') return error('Muitas traduções no momento. Aguarde alguns segundos e tente novamente.', 429);
       if (err instanceof Error && err.message === 'TRANSLATION_NOT_CONFIGURED') {
         return error('Provedor de tradução não configurado no backend', 503);
       }
@@ -3122,7 +3195,8 @@ export const handler = router({
   ]);
   if (publicRoutes.has(route) || /^\/api\/customer\/table\//.test(event.path) ||
       (event.method.toUpperCase() === 'GET' && /^\/api\/delivery\/track\/[^/]+$/.test(event.path)) ||
-      (event.method.toUpperCase() === 'POST' && /^\/api\/delivery\/location\/[^/]+$/.test(event.path))) return null;
+      (event.method.toUpperCase() === 'POST' && /^\/api\/delivery\/location\/[^/]+$/.test(event.path)) ||
+      (event.method.toUpperCase() === 'POST' && /^\/api\/delivery\/driver\/[^/]+\/(profile|complete)$/.test(event.path))) return null;
   const session = sessionFromAuthorization();
   if (!session) return error('Autenticação obrigatória', 401);
   if (session.mode !== 'empresa' || !['Administrador', 'Super Admin'].includes(session.role || '')) {
