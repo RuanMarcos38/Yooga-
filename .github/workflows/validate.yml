@@ -23,10 +23,20 @@ jobs:
           cache-dependency-path: package.json
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Check frontend TypeScript
+        run: npx tsc --noEmit -p tsconfig.json
       - name: Build frontend
         run: npm run build
       - name: Build backend
         run: npm run backend:build
+      - name: Translation authorization and provider regression test
+        run: node translation-regression-test.mjs
+        env:
+          DATA_DIR: ${{ runner.temp }}/tapfood-translation-qa
+      - name: Delivery GPS tracking regression test
+        run: node delivery-tracking-test.mjs
+        env:
+          DATA_DIR: ${{ runner.temp }}/tapfood-delivery-qa
       - name: Tenant isolation regression test
         run: node tenant-isolation-test.mjs
       - name: Table lifecycle and assistant regression test

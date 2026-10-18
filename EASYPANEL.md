@@ -98,3 +98,16 @@ As rotas internas e a interface administrativa exigem perfil `Administrador` ou 
 
 Configure `AUTH_SECRET` com um segredo privado ou mantenha o volume persistente em `DATA_DIR`; na ausência dessa variável, o backend gera e persiste um segredo exclusivo para as sessões. Sessões antigas assinadas com o segredo público de demonstração deixam de funcionar e exigem novo login.
 
+
+## Tradução de textos (módulo i18n)
+
+O tradutor opcional utiliza o backend, sem expor a chave ao frontend. Configure no **serviço backend** do EasyPanel uma das variáveis:
+
+```env
+OPENAI_API_KEY=sua-chave-privada
+# alternativa: TAPFOOD_TRANSLATION_API_KEY=sua-chave-privada
+# opcional: TAPFOOD_TRANSLATION_MODEL=gpt-4o-mini
+```
+
+Não coloque chaves em variáveis `VITE_*`, no GitHub ou no código. Sem a chave, o tradutor informa que o provedor não está configurado, sem simular traduções. O texto enviado voluntariamente pelo usuário é transmitido ao provedor externo; não informe dados sensíveis. O endpoint exige sessão autenticada, limita textos a 2.000 caracteres e não grava o conteúdo no banco. O seletor de idioma é local ao navegador; ainda é necessário revisar todas as telas e conteúdo dinâmico antes de declarar suporte integral.
+
