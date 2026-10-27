@@ -779,16 +779,17 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
   const orderedProducts = tab === 'Recentes' ? [...visibleProducts].reverse() : visibleProducts;
 
   return (
-    <div className="min-h-screen bg-[#f6f5f2] text-[#2f3136]">
-      <aside className={'fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col border-r border-[#ebe7e2] bg-[#fffefa] px-4 py-5 shadow-[6px_0_30px_rgba(45,42,38,0.025)] transition-transform lg:translate-x-0 ' + (menu ? 'translate-x-0' : '-translate-x-full')}>
+    <div className="admin-shell min-h-screen bg-[#f6f5f2] text-[#2f3136]">
+      <aside className={'app-navigation fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col border-r border-[#ebe7e2] bg-[#fffefa] px-4 py-5 shadow-[6px_0_30px_rgba(45,42,38,0.025)] transition-transform lg:translate-x-0 ' + (menu ? 'translate-x-0' : '-translate-x-full')}>
         <div className="mb-5 px-2">
           <BrandMark settings={data.settings} compact />
         </div>
 
-        <nav className="space-y-2 overflow-y-auto pb-3">
+        <nav aria-label="Módulos" className="space-y-2 overflow-y-auto pb-3">
           {nav.map(([id, label, Icon]) => (
             <button
               key={id}
+              aria-current={page === id ? 'page' : undefined}
               onClick={() => { setPage(id); setMenu(false); }}
               className={'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-[12px] transition ' + (page === id ? 'border-[#f08a73] bg-[#fff2ee] text-[#e85b3a]' : 'border-[#ececf2] bg-white text-[#53596d] hover:bg-slate-50')}
             >
@@ -805,9 +806,9 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
 
       {menu && <button aria-label="Fechar menu" className="fixed inset-0 z-40 bg-black/20 lg:hidden" onClick={() => setMenu(false)} />}
 
-      <main className="lg:ml-[220px]">
-        <header className="sticky top-0 z-30 flex h-[72px] items-center gap-3 border-b border-[#ebe7e2] bg-[#fffefa]/95 px-4 shadow-[0_4px_20px_rgba(45,42,38,0.025)] backdrop-blur md:px-6">
-          <button className="grid h-10 w-10 place-items-center rounded-xl border lg:hidden" onClick={() => setMenu(true)}><Menu size={18} /></button>
+      <main className="app-main lg:ml-[220px]">
+        <header className="app-toolbar sticky top-0 z-30 flex h-[72px] items-center gap-3 border-b border-[#ebe7e2] bg-[#fffefa]/95 px-4 shadow-[0_4px_20px_rgba(45,42,38,0.025)] backdrop-blur md:px-6">
+          <button aria-label={t("openMenu")} className="grid h-10 w-10 place-items-center rounded-xl border lg:hidden" onClick={() => setMenu(true)}><Menu size={18} /></button>
           <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[#e7e8ee] bg-[#f9fafc] px-3 md:max-w-[420px]">
             <Search size={16} className="text-slate-400" />
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder={t("search")} className="min-w-0 flex-1 bg-transparent text-xs outline-none" />
@@ -823,7 +824,7 @@ function AdminApp({ session, onLogout }: { session: AuthSession; onLogout: () =>
           </button>
         </header>
 
-        <div className="p-4 md:p-6">
+        <div className="app-content p-4 md:p-6">
           {closingTableRequests.length > 0 && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><Bell size={18} /><span className="flex-1"><b>Fechamento de mesa solicitado</b><span className="block text-xs">{closingTableRequests.map(request => request.table).join(", ")} · Confira a conta e o pagamento antes de liberar a mesa.</span></span><button onClick={() => setPage('tables')} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white">Ver solicitações</button></div>}
           {error && (
             <div className="mb-4 flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-700">
@@ -1138,11 +1139,26 @@ function formatOperationalTime(ms: number) {
   return hours + 'h ' + String(minutes).padStart(2, '0') + 'm';
 }
 
+function ProductImage({ product }: { product?: Product }) {
+  const t = useUiLanguage();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [product?.imageUrl]);
+  return product?.imageUrl && !failed
+    ? <img src={product.imageUrl} alt={product.name} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />
+    : <span role="img" aria-label={t("noProductPhoto")} className="grid h-full w-full place-items-center bg-slate-100 text-slate-400"><Utensils size={24} strokeWidth={1.5} /></span>;
+}
+
 function OrderingWorkspace(props: ViewProps) {
+  const t = useUiLanguage();
   if (props.channel === 'Mesa' && props.table) return <TableOrderWorkspace {...props} />;
   return (
-    <div className="grid gap-5 2xl:grid-cols-[1fr_300px]">
-      <section className="min-w-0">
+    <div className="pos-workspace grid gap-5 2xl:grid-cols-[1fr_300px]">
+      <section className="pos-catalog min-w-0">
+        <section className="order-queue" aria-label={t("recentOrders")}>
+          <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-lg font-bold">{t("recentOrders")}</h2><button onClick={() => props.setPage('history')} className="text-sm font-semibold text-blue-700">{t("viewHistory")}</button></div>
+          <div className="order-queue-grid">{props.data.orders.slice().sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 4).map(order => <article key={order.id} className="recent-order"><div className="flex flex-wrap items-center justify-between gap-2"><strong>{order.code}</strong><Badge value={order.status} /></div><p className="mt-3 font-semibold">{order.table || order.customer || order.channel}</p><div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-slate-600"><span>{new Date(order.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span><span>{BRL(order.total)}</span></div></article>)}</div>
+          {!props.data.orders.length && <p className="recent-order text-sm text-slate-600">{t("noOrders")}</p>}
+        </section>
         <div className="mb-4 flex items-end justify-between">
           <div>
             <h1 className="text-lg font-bold">{props.channel === 'Mesa' && props.table ? props.table + ' · Cardápio' : 'Explore categorias'}</h1>
@@ -1151,14 +1167,15 @@ function OrderingWorkspace(props: ViewProps) {
           <span className="hidden text-[10px] text-slate-400 md:block">Operação online · {props.data.settings.restaurantName}</span>
         </div>
 
-        <div className="mb-5 flex gap-2 overflow-x-auto pb-1">
+        <div className="category-chips mb-5 flex gap-2 overflow-x-auto pb-1">
           {props.categories.map(item => (
             <button
               key={item}
+              aria-pressed={props.category === item}
               onClick={() => props.setCategory(item)}
               className={'flex min-w-[126px] items-center gap-2 rounded-xl border p-2 text-left text-xs transition ' + (props.category === item ? 'border-[#e98e79] bg-[#fff5f1] text-[#d95738] shadow-[0_6px_16px_rgba(92,72,60,0.04)]' : 'border-[#ece8e3] bg-[#fffefa] text-[#47484d] hover:border-[#e5c5bc] hover:shadow-[0_6px_16px_rgba(92,72,60,0.04)]')}
             >
-              <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-[#efede9]"><img src={categoryPhoto(item)} alt="" loading="lazy" className="h-full w-full object-cover natural-photo" /></span>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600"><Utensils size={18} /></span>
               <span className="font-semibold">{item}</span>
             </button>
           ))}
@@ -1173,19 +1190,20 @@ function OrderingWorkspace(props: ViewProps) {
           ))}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="product-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {props.products.map(product => (
-            <article key={product.id} className="rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-3 shadow-[0_10px_26px_rgba(46,42,38,0.045)] transition hover:-translate-y-0.5 hover:border-[#e6b6aa] hover:shadow-[0_14px_34px_rgba(46,42,38,0.07)]">
-              <div className="relative mb-3 h-36 overflow-hidden rounded-lg bg-[#eeebe6]">
-                <button onClick={() => props.toggleFavorite(product.id)} className={'absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-md border bg-white ' + (props.favorites.includes(product.id) ? 'border-[#f45f3f] text-[#f45f3f]' : 'border-[#dfe1e8] text-slate-400')}>
+            <article key={product.id} className="menu-card rounded-xl border border-[#ebe7e2] bg-[#fffefa] p-3 shadow-[0_10px_26px_rgba(46,42,38,0.045)] transition hover:-translate-y-0.5 hover:border-[#e6b6aa] hover:shadow-[0_14px_34px_rgba(46,42,38,0.07)]">
+              <div className="product-image relative mb-3 h-36 overflow-hidden rounded-lg bg-[#eeebe6]">
+                <button aria-label={t('favoriteProduct') + ' ' + product.name} aria-pressed={props.favorites.includes(product.id)} onClick={() => props.toggleFavorite(product.id)} className={'absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-md border bg-white ' + (props.favorites.includes(product.id) ? 'border-[#f45f3f] text-[#f45f3f]' : 'border-[#dfe1e8] text-slate-400')}>
                   <Heart size={14} fill={props.favorites.includes(product.id) ? ACCENT : 'none'} />
                 </button>
-                <img src={productPhoto(product)} alt={product.name} loading="lazy" className="h-full w-full object-cover natural-photo" />
+                <ProductImage product={product} />
               </div>
-              <h3 className="truncate text-sm font-bold">{product.name}</h3>
+              <h3 className="text-sm font-bold">{product.name}</h3>
+              <p className="mt-1 text-xs text-slate-600">{product.category}</p>
               <div className="mt-1 flex items-center justify-between">
                 <strong className="text-lg text-[#ef5a38]">{BRL(product.price)}</strong>
-                <span className="flex items-center gap-1 text-[9px] text-slate-400"><Star size={11} fill="#f6b62f" className="text-[#f6b62f]" /> 4.8 · {product.stock} un</span>
+                <span className="text-xs text-slate-600">{product.stock} un</span>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button onClick={() => props.toggleFavorite(product.id)} className="rounded-lg border border-[#e4e6ed] py-2 text-[10px] font-semibold text-[#596075]">Favoritar</button>
@@ -1203,8 +1221,12 @@ function OrderingWorkspace(props: ViewProps) {
 }
 
 function InvoicePanel(props: ViewProps) {
+  const t = useUiLanguage();
+  const [collapsed, setCollapsed] = useState(false);
   return (
-    <aside className="h-fit rounded-xl bg-white p-4 2xl:sticky 2xl:top-[96px]">
+    <aside aria-label="Pedido atual" className="order-sidebar h-fit rounded-xl bg-white p-4 2xl:sticky 2xl:top-[96px]">
+      <button type="button" className="mb-3 w-full rounded-lg border px-3 text-sm font-semibold lg:hidden" aria-expanded={!collapsed} aria-controls="current-order-content" onClick={() => setCollapsed(value => !value)}>{t(collapsed ? 'expandOrder' : 'collapseOrder')} · {BRL(props.subtotal)}</button>
+      <div id="current-order-content" className={collapsed ? 'hidden lg:block' : ''}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold">{props.channel === 'Mesa' && props.table ? 'Pedido · ' + props.table : 'Pedido atual'}</h2>
@@ -1215,15 +1237,15 @@ function InvoicePanel(props: ViewProps) {
       <div className="space-y-3">
         {props.cart.map(item => (
           <div key={item.productId} className="flex items-center gap-3">
-            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-[#eeeae4]"><img src={productPhoto(props.data.products.find(product => product.id === item.productId) || { id: item.productId, name: item.name, category: '', price: item.price, stock: 0, active: true })} alt={item.name} loading="lazy" className="h-full w-full object-cover natural-photo" /></div>
+            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-[#eeeae4]"><ProductImage product={props.data.products.find(product => product.id === item.productId)} /></div>
             <div className="min-w-0 flex-1">
-              <strong className="block truncate text-[11px]">{item.name}</strong>
+              <strong className="block text-[11px]">{item.name}</strong>
               <span className="text-[11px] font-bold text-[#ef5a38]">{BRL(item.price * item.qty)}</span>
               <div className="mt-1 flex items-center gap-2">
-                <button onClick={() => props.changeQty(item.productId, -1)} className="grid h-5 w-5 place-items-center rounded border"><Minus size={11} /></button>
+                <button aria-label={t('decreaseQuantity') + ' ' + item.name} onClick={() => props.changeQty(item.productId, -1)} className="grid h-5 w-5 place-items-center rounded border"><Minus size={11} /></button>
                 <b className="text-[10px]">{item.qty}</b>
-                <button onClick={() => props.changeQty(item.productId, 1)} className="grid h-5 w-5 place-items-center rounded border"><Plus size={11} /></button>
-                <button onClick={() => props.removeItem(item.productId)} className="ml-auto text-slate-300 hover:text-red-500"><Trash2 size={13} /></button>
+                <button aria-label={t('increaseQuantity') + ' ' + item.name} onClick={() => props.changeQty(item.productId, 1)} className="grid h-5 w-5 place-items-center rounded border"><Plus size={11} /></button>
+                <button aria-label={t('removeItem') + ' ' + item.name} onClick={() => props.removeItem(item.productId)} className="ml-auto text-slate-300 hover:text-red-500"><Trash2 size={13} /></button>
               </div>
             </div>
           </div>
@@ -1267,6 +1289,7 @@ function InvoicePanel(props: ViewProps) {
       <button disabled={!props.cart.length} onClick={() => void props.finishOrder()} className="w-full rounded-lg bg-[#f45f3f] py-3 text-[11px] font-bold text-white transition hover:bg-[#df5132] disabled:cursor-not-allowed disabled:opacity-40">
         Finalizar pedido
       </button>
+      </div>
     </aside>
   );
 }
@@ -4343,4 +4366,3 @@ function Metric({ label, value }: { label: string; value: string }) {
 function MiniStat({ label, value }: { label: string; value: string }) {
   return <div className="rounded-lg bg-[#f7f8fa] p-4"><span className="block text-[9px] text-slate-400">{label}</span><b className="mt-1 block text-sm">{value}</b></div>;
 }
-
