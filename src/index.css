@@ -68,18 +68,23 @@ input:focus-visible, textarea:focus-visible {
 .order-sidebar [class*="text-[9px]"], .order-sidebar [class*="text-[10px]"], .order-sidebar [class*="text-[11px]"] { font-size: 12px; }
 
 @media (min-width: 1024px) {
-  .admin-shell aside.app-navigation { inset: 0 0 auto 0; width: 100%; height: 76px; flex-direction: row; align-items: center; gap: 24px; padding: 12px 24px; border-right: 0; border-bottom: 1px solid #304052; }
-  .app-navigation > div { margin: 0; padding: 0; flex-shrink: 0; width: 170px; }
-  .app-navigation nav { display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; padding: 0 0 4px; }
-  .app-navigation nav > button { width: auto; flex-shrink: 0; margin: 0; padding: 10px 12px; gap: 8px; border-radius: 8px; }
-  .admin-shell .app-main { margin-left: 0; padding-top: 76px; }
-  .admin-shell .app-toolbar { top: 76px; height: 64px; }
-  .admin-shell .pos-workspace { grid-template-columns: minmax(0,1fr) 360px; gap: 24px; }
-  .admin-shell .order-sidebar { position: sticky; top: 164px; max-height: calc(100dvh - 180px); overflow-y: auto; scrollbar-width: thin; }
+  .admin-shell aside.app-navigation { inset: 0 auto 0 0; width: 220px; height: 100dvh; flex-direction: column; align-items: stretch; gap: 0; padding: 20px 16px; border-right: 1px solid #304052; border-bottom: 0; }
+  .admin-shell .app-navigation > div { margin: 0 0 20px; padding: 0 8px; flex-shrink: 0; }
+  .admin-shell .app-navigation nav { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 6px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; padding: 0 0 64px; }
+  .admin-shell .app-navigation nav > button { width: 100%; min-height: 44px; flex-shrink: 0; margin: 0; padding: 10px 12px; gap: 8px; border-radius: 8px; }
+  .admin-shell .app-main { margin-left: 220px; padding-top: 0; }
+  .admin-shell .app-toolbar { top: 0; height: 64px; }
+  .admin-shell .pos-workspace { grid-template-columns: minmax(0,1fr) 340px; gap: 20px; }
+  .admin-shell .order-sidebar { position: sticky; top: 88px; max-height: calc(100dvh - 104px); overflow-y: auto; scrollbar-width: thin; }
+  .admin-shell .product-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (min-width: 1280px) {
   .admin-shell .product-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
 }
 @media (min-width: 1366px) {
   .order-queue-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+}
+@media (min-width: 1600px) {
   .admin-shell .product-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
 }
 @media (max-width: 1023px) {
