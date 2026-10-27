@@ -34,6 +34,8 @@ O build padrão encontrou uma restrição de leitura do ambiente Windows ao carr
 
 No navegador, passaram as ações de adicionar, aumentar/diminuir quantidade, remover, desabilitar finalização com carrinho vazio, finalizar um pedido local com confirmação de sucesso, recolher/expandir o painel mobile e trocar para inglês. Foram abertas as telas de dashboard, mesas, histórico/caixa, cardápio, KDS, delivery, produtos, estoque, financeiro, clientes, relatórios e configurações sem erros JavaScript. Isso verifica navegação e renderização, não todos os processos de cada módulo; nenhuma homologação operacional completa desses módulos é alegada.
 
+Também passaram os estados de busca sem resultados, carregamento e erro de conexão. O teste reteve a resposta de estado e retornou uma falha HTTP controlada apenas no navegador local; a aplicação exibiu sua mensagem de erro existente. Não houve alteração no tratamento de erros.
+
 ## Evidências visuais
 
 Capturas do navegador Chrome, renderizando o aplicativo real e seu backend local com a base inicial de testes do próprio repositório. Não são mockups nem fotografias de produção. Não comprovam o estado do serviço publicado. Tamanhos: 1920, 1440, 1366, 1280, 1024, 768, 390 e 360px; altura de viewport 1000px, captura da página inteira. Comparativo base/final sem overflow horizontal da página e sem erros JavaScript nas capturas.
